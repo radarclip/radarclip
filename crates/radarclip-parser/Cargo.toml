@@ -1,0 +1,12 @@
+[package]
+name = "radarclip-parser"
+description = "Read a CS2 demo once and cut radarclip/1 clips out of it"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+radarclip-core.workspace = true
+parser.workspace = true
+ahash.workspace = true
