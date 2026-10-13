@@ -5,3 +5,4 @@ dist/
 *.dem.bz2
 *.dem.zst
 .DS_Store
+crates/radarclip-wasm/pkg/

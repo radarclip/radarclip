@@ -9,8 +9,8 @@ compressed, a whole round ~8 KB. Small enough to keep, embed in a page, or send 
 - **Format:** [`spec/radarclip-1.md`](spec/radarclip-1.md), JSON Schema and reference clips in [`spec/`](spec).
 - **Rust:** `radarclip-core` (format, encoder, decoder), `radarclip-parser` (CS2 demo → clips, on
   [demoparser2](https://github.com/LaihoE/demoparser)'s parser), `radarclip-cli`.
-- **Planned:** WebAssembly build for parsing in the browser (demos never leave the machine),
-  Python bindings, a canvas player (`packages/`).
+- **WebAssembly:** `radarclip-wasm` parses demos in the browser; demos never leave the machine.
+- **Planned:** Python bindings, a canvas player (`packages/`).
 
 ## CLI
 
@@ -21,11 +21,30 @@ target/release/radarclip clip match.dem -r 7 --from 45 --to 65 --mark "59.7=kill
 ```
 
 Times are seconds after the round's freeze end (round time 1:55 = 0). `.radarclip` is raw
-deflate, `.radarclip.json` readable JSON. `--anonymize` replaces player names.
+deflate, `.radarclip.json` readable JSON. `--anonymize` replaces player names. Demos may be
+plain, `.dem.bz2` or `.dem.zst`.
+
+## Browser
+
+```js
+import init, { DemoLoader } from './pkg/radarclip_wasm.js';
+await init();
+const loader = new DemoLoader(file.size);          // stream the file in slices
+for (let off = 0; off < file.size; off += 16 << 20)
+  loader.push(new Uint8Array(await file.slice(off, off + (16 << 20)).arrayBuffer()));
+const demo = loader.finish();                      // parse (run this in a Web Worker)
+JSON.parse(demo.info());                           // map, rounds, players
+demo.clip(JSON.stringify({ round: 7, from: 45, to: 65, focus: ['7656…'], anonymize: true }));
+```
+
+`make serve` builds the wasm package and serves a test page on http://localhost:8765/www/.
+A 342 MB demo parses in ~8 s in Chrome (wasm SIMD) and needs ~650 MB of memory; clips are then
+cut in a few milliseconds.
 
 ## Develop
 
-Rust via [rustup](https://rustup.rs) with the `wasm32-unknown-unknown` target, and
+Rust via [rustup](https://rustup.rs) with the `wasm32-unknown-unknown` target,
+`cargo install wasm-bindgen-cli --version 0.2.129` for the browser build, and
 [uv](https://docs.astral.sh/uv/) for the schema check. The parser builds on a pinned commit of
 our demoparser fork, [radarclip/demoparser](https://github.com/radarclip/demoparser) (branch
 `radarclip`: wasm32 and protoc fixes).

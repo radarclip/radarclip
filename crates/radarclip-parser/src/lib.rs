@@ -230,8 +230,33 @@ fn intern(table: &mut Vec<String>, index: &mut AHashMap<String, u32>, s: &str) -
     i
 }
 
+/// Unpack `.dem.bz2` and `.dem.zst` (as Valve and FACEIT serve demos); plain demos pass through.
+pub fn decompress(bytes: &[u8]) -> Result<std::borrow::Cow<'_, [u8]>, String> {
+    use std::io::Read;
+    if bytes.starts_with(b"BZh") {
+        let mut out = Vec::with_capacity(bytes.len() * 4);
+        bzip2::read::MultiBzDecoder::new(bytes).read_to_end(&mut out).map_err(|e| format!("bz2: {e}"))?;
+        Ok(out.into())
+    } else if bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
+        let mut out = Vec::with_capacity(bytes.len() * 4);
+        ruzstd::decoding::StreamingDecoder::new(bytes)
+            .map_err(|e| format!("zstd: {e}"))?
+            .read_to_end(&mut out)
+            .map_err(|e| format!("zstd: {e}"))?;
+        Ok(out.into())
+    } else {
+        Ok(bytes.into())
+    }
+}
+
 impl Match {
+    /// Read a demo (plain, .bz2 or .zst).
     pub fn parse(bytes: &[u8]) -> Result<Match, String> {
+        let bytes = decompress(bytes)?;
+        if !bytes.starts_with(b"PBDEMS2") {
+            return Err("not a CS2 demo (expected PBDEMS2 header)".into());
+        }
+        let bytes = &bytes[..];
         // Pass 1: game events (player props attached as user_X, attacker_yaw, …).
         let ev = pass(bytes, &["X", "Y", "Z", "yaw"], &["is_warmup_period"], EVENTS, vec![], false)?;
         let map = ev.header.as_ref().and_then(|h| h.get("map_name").cloned()).unwrap_or_default();

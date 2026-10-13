@@ -1,0 +1,4 @@
+# getrandom 0.3+ needs its JS backend chosen explicitly on wasm32 (pulled in via the parser's hash maps).
+# simd128: ~25% faster parsing; supported by all current browsers (Safari 16.4+).
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", 'getrandom_backend="wasm_js"', "-C", "target-feature=+simd128"]
