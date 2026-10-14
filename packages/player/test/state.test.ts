@@ -7,7 +7,12 @@ import { RadarclipPlayer, type StateKey } from '../src/player.js'
 // A canvas whose 2D context accepts every call, so the player can render in Node.
 function fakeCanvas() {
   const ctx = new Proxy({} as Record<string | symbol, unknown>, {
-    get: (t, k) => (k in t ? t[k] : k === 'measureText' ? () => ({ width: 10 }) : () => {}),
+    get: (t, k) => {
+      if (k in t) return t[k]
+      if (k === 'measureText') return () => ({ width: 10 })
+      if (k === 'createRadialGradient' || k === 'createLinearGradient') return () => ({ addColorStop() {} })
+      return () => {}
+    },
     set: (t, k, v) => ((t[k] = v), true),
   })
   return {
