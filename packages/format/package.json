@@ -1,0 +1,14 @@
+{
+  "name": "@radarclip/format",
+  "version": "0.1.0",
+  "description": "radarclip/1: types, reading/writing (.radarclip / .radarclip.json) and decoding into per-frame player state",
+  "license": "MIT",
+  "type": "module",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  }
+}

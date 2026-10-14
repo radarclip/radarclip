@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>radarclip player</title>
+<style>
+  :root { --bg: #fff; --fg: #1b1d21; --muted: #6b7280; --line: #e5e7eb; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0b0c0f; --fg: #e8eaed; --muted: #9aa0a6; --line: #2a2e35; } }
+  body { margin: 0; padding: 24px 16px; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
+  main { max-width: 820px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { color: var(--muted); margin: 0 0 16px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
+  select, label.file { font: inherit; padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
+  input[type=file] { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>radarclip player</h1>
+  <p>Reference clips from <code>spec/fixtures</code>, or drop a <code>.radarclip</code> file. Radars from <code>www/radars/</code> (run <code>scripts/local-radars.mjs</code>).</p>
+  <div class="row">
+    <select id="pick">
+      <option value="../../../spec/fixtures/ancient-r7-short.radarclip.json">Ancient R7, 20 s</option>
+      <option value="../../../spec/fixtures/nuke-r2-full.radarclip.json">Nuke R2, full round</option>
+    </select>
+    <label class="file">Open clip…<input type="file" id="file" accept=".radarclip,.json"></label>
+  </div>
+  <radarclip-player id="player"></radarclip-player>
+</main>
+<script type="module">
+import { RadarclipPlayer, readClip } from '../dist/radarclip-player.js'
+const el = document.getElementById('player')
+async function radarFor(map) {
+  const r = await fetch(`radars/${map}.json`)
+  if (r.ok) RadarclipPlayer.registerRadar(map, await r.json())
+}
+async function show(clip) {
+  await radarFor(clip.map)
+  el.clip = clip
+}
+const pick = document.getElementById('pick')
+const load = async () => show(await readClip(await (await fetch(pick.value)).blob()))
+pick.onchange = load
+document.getElementById('file').onchange = async (e) => e.target.files[0] && show(await readClip(e.target.files[0]))
+document.body.ondragover = (e) => e.preventDefault()
+document.body.ondrop = async (e) => { e.preventDefault(); e.dataTransfer.files[0] && show(await readClip(e.dataTransfer.files[0])) }
+load()
+</script>
+</body>
+</html>

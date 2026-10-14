@@ -16,6 +16,8 @@ struct Cli {
 enum Command {
     /// Map, rounds and players of a demo.
     Info { demo: PathBuf },
+    /// Decode a clip's tracks into one row per frame (reference output for other decoders).
+    Decode { clip: PathBuf },
     /// Cut a clip. Times are seconds after the round's freeze end (round time 1:55 = 0).
     Clip {
         demo: PathBuf,
@@ -75,6 +77,25 @@ fn run(cli: Cli) -> Result<(), String> {
             for p in &m.players {
                 println!("{:<20} {}", p.key, p.name);
             }
+        }
+        Command::Decode { clip } => {
+            let text = std::fs::read_to_string(&clip).map_err(|e| format!("{}: {e}", clip.display()))?;
+            let c: radarclip_core::Clip = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+            let r2 = |v: f32| (v as f64 * 100.0).round() / 100.0;
+            let players: Vec<Vec<serde_json::Value>> = c
+                .players
+                .iter()
+                .map(|p| {
+                    radarclip_core::decode_track(&p.track, c.frames, c.quant)
+                        .into_iter()
+                        .map(|s| match s {
+                            None => serde_json::Value::Null,
+                            Some(s) => serde_json::json!([r2(s.x), r2(s.y), r2(s.z), r2(s.yaw), s.hp, s.armor, s.weapon, s.place]),
+                        })
+                        .collect()
+                })
+                .collect();
+            println!("{}", serde_json::json!({ "columns": ["x", "y", "z", "yaw", "hp", "armor", "weapon", "place"], "players": players }));
         }
         Command::Clip { demo, round, from, to, focus, mark, title, step, anonymize, output, pretty } => {
             let m = load(&demo)?;

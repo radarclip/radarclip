@@ -10,7 +10,23 @@ compressed, a whole round ~8 KB. Small enough to keep, embed in a page, or send 
 - **Rust:** `radarclip-core` (format, encoder, decoder), `radarclip-parser` (CS2 demo → clips, on
   [demoparser2](https://github.com/LaihoE/demoparser)'s parser), `radarclip-cli`.
 - **WebAssembly:** `radarclip-wasm` parses demos in the browser; demos never leave the machine.
-- **Planned:** Python bindings, a canvas player (`packages/`).
+- **TypeScript:** `@radarclip/format` (read/write, decode, interpolate) and `@radarclip/player`
+  (canvas player and `<radarclip-player>` element, 23 KB minified, no dependencies).
+- **Planned:** Python bindings, hosted radars.
+
+## Player
+
+```html
+<radarclip-player src="r7.radarclip"></radarclip-player>
+<script type="module">
+  import { RadarclipPlayer } from '@radarclip/player'
+  RadarclipPlayer.registerRadar('de_ancient', { pos_x: -2953, pos_y: 2164, scale: 5, image: '/radars/de_ancient.png' })
+</script>
+```
+
+Or drive a canvas yourself: `const p = new RadarclipPlayer(canvas, { radar }); await p.load(clip);
+p.play(); p.seek(59.7); p.on('time', …); await p.toBlob()`. Without a radar it draws on a plain
+background. Colours via `--radarclip-ct`, `-t`, `-me`, `-bg`, `-fg`, `-muted`.
 
 ## CLI
 
@@ -50,8 +66,11 @@ our demoparser fork, [radarclip/demoparser](https://github.com/radarclip/demopar
 `radarclip`: wasm32 and protoc fixes).
 
 ```bash
-make check   # tests, schema check of the fixtures, wasm build check
+make check   # Rust + TypeScript tests, schema check of the fixtures, wasm build check
+make player-serve   # player test page with the reference clips
 ```
+
+Node 22+ and pnpm for the TypeScript packages.
 
 ## Inspiration
 
