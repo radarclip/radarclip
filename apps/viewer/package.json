@@ -1,0 +1,18 @@
+{
+  "name": "@radarclip/viewer",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Demo viewer: drop a CS2 demo, parse it in the browser, play every round",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "true"
+  },
+  "dependencies": {
+    "@radarclip/controls": "workspace:*",
+    "@radarclip/format": "workspace:*",
+    "@radarclip/player": "workspace:*",
+    "@radarclip/radars": "workspace:*"
+  }
+}

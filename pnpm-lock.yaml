@@ -18,6 +18,27 @@ importers:
         specifier: ^3.2.0
         version: 3.2.7
 
+  apps/viewer:
+    dependencies:
+      '@radarclip/controls':
+        specifier: workspace:*
+        version: link:../../packages/controls
+      '@radarclip/format':
+        specifier: workspace:*
+        version: link:../../packages/format
+      '@radarclip/player':
+        specifier: workspace:*
+        version: link:../../packages/player
+      '@radarclip/radars':
+        specifier: workspace:*
+        version: link:../../packages/radars
+
+  packages/controls:
+    dependencies:
+      '@radarclip/player':
+        specifier: workspace:*
+        version: link:../player
+
   packages/format: {}
 
   packages/player:

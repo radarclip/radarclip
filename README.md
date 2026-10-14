@@ -10,17 +10,21 @@ compressed, a whole round ~8 KB. Small enough to keep, embed in a page, or send 
 - **Rust:** `radarclip-core` (format, encoder, decoder), `radarclip-parser` (CS2 demo → clips, on
   [demoparser2](https://github.com/LaihoE/demoparser)'s parser), `radarclip-cli`.
 - **WebAssembly:** `radarclip-wasm` parses demos in the browser; demos never leave the machine.
-- **TypeScript:** `@radarclip/format` (read/write, decode, interpolate) and `@radarclip/player`
-  (canvas player and `<radarclip-player>` element, 23 KB minified, no dependencies).
+- **TypeScript:** `@radarclip/format` (read/write, decode, interpolate), `@radarclip/player` (the
+  bare canvas viewer, no UI) and `@radarclip/controls` (playback controls that connect to it).
+- **Viewer:** [radarclip.github.io/radarclip](https://radarclip.github.io/radarclip/) — drop a demo,
+  watch every round. Parsed in your browser, never uploaded (`apps/viewer`).
 - **Radars:** `@radarclip/radars` knows every map's overview transform and where to load its radar.
 - **Planned:** Python bindings.
 
 ## Player
 
 ```html
-<radarclip-player src="r7.radarclip"></radarclip-player>
+<radarclip-player id="p" src="r7.radarclip"></radarclip-player>
+<radarclip-controls for="p"></radarclip-controls>   <!-- optional -->
 <script type="module">
   import { RadarclipPlayer } from '@radarclip/player'
+  import '@radarclip/controls'
   import { radars } from '@radarclip/radars'
   RadarclipPlayer.radarResolver = radars()   // or radars('https://your.host/radars')
 </script>
@@ -70,6 +74,7 @@ our demoparser fork, [radarclip/demoparser](https://github.com/radarclip/demopar
 ```bash
 make check   # Rust + TypeScript tests, schema check of the fixtures, wasm build check
 make player-serve   # player test page with the reference clips
+make viewer-serve   # demo viewer on http://localhost:8767
 ```
 
 Node 22+ and pnpm for the TypeScript packages.

@@ -1,7 +1,7 @@
 # Build, test and check everything. Rust via rustup (~/.cargo/bin), schema check via uv.
 CARGO ?= $(shell command -v cargo || echo $(HOME)/.cargo/bin/cargo)
 
-.PHONY: build test spec-check check wasm-check wasm serve js js-test player-serve
+.PHONY: build test spec-check check wasm-check wasm serve js js-test player-serve viewer viewer-serve
 
 build:
 	$(CARGO) build --release
@@ -39,5 +39,11 @@ js-test: js
 # Player test page: http://localhost:8766/packages/player/www/ (radars: node packages/player/scripts/local-radars.mjs <dir>)
 player-serve: js
 	python3 -m http.server 8766 -b 127.0.0.1
+
+# Demo viewer (deployed to GitHub Pages): apps/viewer/dist
+viewer: wasm js
+
+viewer-serve: viewer
+	python3 -m http.server 8767 -b 127.0.0.1 -d apps/viewer/dist
 
 check: test spec-check wasm-check js-test

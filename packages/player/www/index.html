@@ -14,6 +14,7 @@
   .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
   select, label.file { font: inherit; padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
   input[type=file] { display: none; }
+  .viewer { max-width: 78vh; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 </style>
 </head>
 <body>
@@ -27,11 +28,12 @@
     </select>
     <label class="file">Open clip…<input type="file" id="file" accept=".radarclip,.json"></label>
   </div>
-  <radarclip-player id="player"></radarclip-player>
+  <div class="viewer"><radarclip-player id="player"></radarclip-player><radarclip-controls for="player"></radarclip-controls></div>
 </main>
 <script type="module">
 import { RadarclipPlayer, readClip } from '../dist/radarclip-player.js'
 import { radars } from '../../radars/dist/index.js'
+import '../../controls/dist/radarclip-controls.iife.js'
 RadarclipPlayer.radarResolver = radars()
 const el = document.getElementById('player')
 async function radarFor(map) {
@@ -40,7 +42,7 @@ async function radarFor(map) {
 }
 async function show(clip) {
   await radarFor(clip.map)
-  el.clip = clip
+  await el.load(clip)
 }
 const pick = document.getElementById('pick')
 const load = async () => show(await readClip(await (await fetch(pick.value)).blob()))
