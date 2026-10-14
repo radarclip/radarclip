@@ -157,8 +157,11 @@ export function stateAt(r: Replay, player: number, t: number): PlayerState | nul
   if (pos < 0 || pos > r.frames - 1) return null
   const i = Math.floor(pos)
   if (!p.alive[i]) return null
-  const j = Math.min(i + 1, r.frames - 1)
-  const f = p.alive[j] ? pos - i : 0
+  // Interpolate only towards a frame that has a position: on the last frame before a death the
+  // next one is empty, and NaN * 0 would still be NaN.
+  const next = Math.min(i + 1, r.frames - 1)
+  const j = p.alive[next] ? next : i
+  const f = j === i ? 0 : pos - i
   const near = f > 0.5 ? j : i
   const ya = p.yaw[i]
   return {
