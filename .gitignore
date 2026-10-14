@@ -8,3 +8,4 @@ dist/
 crates/radarclip-wasm/pkg/
 packages/*/dist/
 packages/player/www/radars/
+apps/*/dist/
