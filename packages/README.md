@@ -5,8 +5,11 @@ TypeScript packages (pnpm workspace):
 - `format` — `@radarclip/format`: types, `readClip`/`writeClip` (.radarclip / .radarclip.json),
   `decode` into per-frame arrays, `stateAt` interpolation. Tested against the Rust reference
   decoder output in `spec/fixtures/*.frames.json`.
-- `player` — `@radarclip/player`: `RadarclipPlayer` (canvas) and the `<radarclip-player>` element.
+- `player` — `@radarclip/player`: the bare viewer. `RadarclipPlayer` (canvas + API) and the
+  `<radarclip-player>` element, no buttons; events are re-dispatched as `radarclip:*` DOM events.
   `www/` is a test page; `scripts/local-radars.mjs` fills `www/radars/` from locally cached radars.
+- `controls` — `@radarclip/controls`: `<radarclip-controls for="player-id">`, play/pause,
+  timeline with marks, speed, floor, zoom and keyboard, connected through the player's API.
 
 - `radars` — `@radarclip/radars`: overview transforms (position, scale, floor split) for every
   map with a radar, and image URLs. Images are Valve's and are not shipped: they load at runtime

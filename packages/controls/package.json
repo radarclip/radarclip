@@ -1,0 +1,20 @@
+{
+  "name": "@radarclip/controls",
+  "version": "0.1.0",
+  "description": "Playback controls for a radarclip player: <radarclip-controls for=\"player-id\">",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/radarclip-controls.js" },
+    "./iife": "./dist/radarclip-controls.iife.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json --emitDeclarationOnly && esbuild src/index.ts --bundle --format=esm --target=es2022 --external:@radarclip/player --outfile=dist/radarclip-controls.js && esbuild src/index.ts --bundle --format=iife --global-name=RadarclipControls --target=es2022 --minify --outfile=dist/radarclip-controls.iife.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "true"
+  },
+  "dependencies": {
+    "@radarclip/player": "workspace:*"
+  }
+}

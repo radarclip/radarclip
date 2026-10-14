@@ -21,7 +21,7 @@ export interface PlayerOptions {
   hud?: boolean
 }
 
-type EventName = 'time' | 'play' | 'pause' | 'ended' | 'load'
+export type PlayerEventName = 'time' | 'play' | 'pause' | 'ended' | 'load' | 'view'
 export type Zoom = 'fit' | 'map'
 export type Floor = 'upper' | 'lower'
 
@@ -77,8 +77,6 @@ export class RadarclipPlayer {
 
   readonly canvas: HTMLCanvasElement
   replay!: Replay
-  /** Playback rate (1 = real time). */
-  speed = 1
   private ctx: CanvasRenderingContext2D
   private opts: PlayerOptions
   private theme: Theme
@@ -86,7 +84,7 @@ export class RadarclipPlayer {
   private images: { upper?: HTMLImageElement; lower?: HTMLImageElement } = {}
   private tick = 0
   private raf = 0
-  private listeners = new Map<EventName, Set<(t: number) => void>>()
+  private listeners = new Map<PlayerEventName, Set<(t: number) => void>>()
   private resizeObserver?: ResizeObserver
   private shots: ShotView[] = []
   private kills: Extract<Event, { type: 'kill' }>[] = []
@@ -94,6 +92,7 @@ export class RadarclipPlayer {
   private _zoom: Zoom = 'fit'
   private _floor: Floor = 'upper'
   private _playing = false
+  private _speed = 1
 
   constructor(canvas: HTMLCanvasElement, opts: PlayerOptions = {}) {
     this.canvas = canvas
@@ -104,6 +103,11 @@ export class RadarclipPlayer {
       this.resizeObserver = new ResizeObserver(() => this.replay && this.render())
       this.resizeObserver.observe(canvas)
     }
+  }
+
+  setTheme(theme: Partial<Theme>) {
+    this.theme = { ...DEFAULT_THEME, ...this.opts.theme, ...theme }
+    if (this.replay) this.render()
   }
 
   // --- loading -------------------------------------------------------------------------------
@@ -197,7 +201,7 @@ export class RadarclipPlayer {
     let last = performance.now()
     const step = (now: number) => {
       if (!this._playing) return
-      this.tick += ((now - last) / 1000) * this.speed * this.replay.tickrate
+      this.tick += ((now - last) / 1000) * this._speed * this.replay.tickrate
       last = now
       if (this.tick >= this.replay.end) {
         this.tick = this.replay.end
@@ -225,6 +229,15 @@ export class RadarclipPlayer {
     this._playing ? this.pause() : this.play()
   }
 
+  /** Playback rate (1 = real time). */
+  get speed() {
+    return this._speed
+  }
+  set speed(v: number) {
+    this._speed = v
+    this.emit('view')
+  }
+
   /** 'fit': the area around the focus players; 'map': the whole radar. */
   get zoom() {
     return this._zoom
@@ -232,6 +245,7 @@ export class RadarclipPlayer {
   set zoom(z: Zoom) {
     this._zoom = z
     this.render()
+    this.emit('view')
   }
 
   get split(): number | null {
@@ -243,15 +257,16 @@ export class RadarclipPlayer {
   set floor(f: Floor) {
     this._floor = f
     this.render()
+    this.emit('view')
   }
 
-  on(name: EventName, fn: (seconds: number) => void): () => void {
+  on(name: PlayerEventName, fn: (seconds: number) => void): () => void {
     if (!this.listeners.has(name)) this.listeners.set(name, new Set())
     this.listeners.get(name)!.add(fn)
     return () => this.listeners.get(name)?.delete(fn)
   }
 
-  private emit(name: EventName) {
+  private emit(name: PlayerEventName) {
     for (const fn of this.listeners.get(name) ?? []) fn(this.time)
   }
 
