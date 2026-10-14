@@ -1,0 +1,102 @@
+{
+ "ar_baggage": {
+  "name": "Baggage",
+  "pos_x": -1316,
+  "pos_y": 1288,
+  "scale": 2.539062,
+  "split_z": -5
+ },
+ "ar_shoots": {
+  "name": "Shoots (Day)",
+  "pos_x": -1368,
+  "pos_y": 1952,
+  "scale": 2.6875
+ },
+ "ar_shoots_night": {
+  "name": "Shoots (Night)",
+  "pos_x": -1368,
+  "pos_y": 1952,
+  "scale": 2.6875
+ },
+ "cs_italy": {
+  "name": "Italy",
+  "pos_x": -2647,
+  "pos_y": 2592,
+  "scale": 4.6
+ },
+ "cs_office": {
+  "name": "Office",
+  "pos_x": -1838,
+  "pos_y": 1858,
+  "scale": 4.1
+ },
+ "de_ancient": {
+  "name": "Ancient",
+  "pos_x": -2953,
+  "pos_y": 2164,
+  "scale": 5
+ },
+ "de_ancient_night": {
+  "name": "Ancient",
+  "pos_x": -2953,
+  "pos_y": 2164,
+  "scale": 5
+ },
+ "de_anubis": {
+  "name": "Anubis",
+  "pos_x": -2796,
+  "pos_y": 3328,
+  "scale": 5.22
+ },
+ "de_cache": {
+  "name": "Cache",
+  "pos_x": -2000,
+  "pos_y": 3250,
+  "scale": 5.5
+ },
+ "de_dust2": {
+  "name": "Dust II",
+  "pos_x": -2476,
+  "pos_y": 3239,
+  "scale": 4.4
+ },
+ "de_inferno": {
+  "name": "Inferno",
+  "pos_x": -2087,
+  "pos_y": 3870,
+  "scale": 4.9
+ },
+ "de_mirage": {
+  "name": "Mirage",
+  "pos_x": -3230,
+  "pos_y": 1713,
+  "scale": 5
+ },
+ "de_nuke": {
+  "name": "Nuke",
+  "pos_x": -3453,
+  "pos_y": 2887,
+  "scale": 7,
+  "split_z": -495
+ },
+ "de_overpass": {
+  "name": "Overpass",
+  "pos_x": -4831,
+  "pos_y": 1781,
+  "scale": 5.2
+ },
+ "de_train": {
+  "name": "Train",
+  "pos_x": -2308,
+  "pos_y": 2078,
+  "scale": 4.082077,
+  "split_z": -50
+ },
+ "de_vertigo": {
+  "name": "Vertigo",
+  "pos_x": -3168,
+  "pos_y": 1762,
+  "scale": 4,
+  "split_z": 11700
+ }
+}

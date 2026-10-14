@@ -49,6 +49,7 @@ const clock = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.f
 
 /** Radars registered by map name (e.g. by a page that hosts them). */
 const registry = new Map<string, Radar>()
+let resolver: ((map: string) => Radar | undefined | Promise<Radar | undefined>) | undefined
 
 interface ShotView {
   t: number
@@ -67,6 +68,11 @@ interface ShotView {
 export class RadarclipPlayer {
   static registerRadar(map: string, radar: Radar) {
     registry.set(map, radar)
+  }
+
+  /** Fallback for maps not registered, e.g. `RadarclipPlayer.radarResolver = radars()` from @radarclip/radars. */
+  static set radarResolver(fn: ((map: string) => Radar | undefined | Promise<Radar | undefined>) | undefined) {
+    resolver = fn
   }
 
   readonly canvas: HTMLCanvasElement
@@ -111,6 +117,8 @@ export class RadarclipPlayer {
       if (!src) return undefined
       const i = new Image()
       i.decoding = 'async'
+      // Hosted radars come from another origin; without CORS the canvas could not be exported.
+      if (!src.startsWith('data:')) i.crossOrigin = 'anonymous'
       i.src = src
       try {
         await i.decode()
@@ -141,7 +149,7 @@ export class RadarclipPlayer {
       const r = await src(clip.map)
       if (r) return r
     }
-    return clip.radar ?? registry.get(clip.map)
+    return clip.radar ?? registry.get(clip.map) ?? (await resolver?.(clip.map))
   }
 
   /** No radar: frame everything that happens on a plain background. */
