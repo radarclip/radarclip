@@ -28,6 +28,33 @@ export interface PlayerOptions {
   interactive?: boolean
   /** Zoom with the mouse wheel (default true). Turn off on pages that scroll past many players. */
   wheelZoom?: boolean
+  /**
+   * URL of a kill-feed icon, or `false` for weapon names and radarclip's own drawn symbols.
+   * `name` is a weapon as the game names it (`ak47`, `flashbang_assist`) or a kill symbol
+   * (`headshot`, `wallbang`, `noscope`, `smoke`, `blind`). Default: the game's own icons via
+   * the counter-strike-icons project on jsDelivr; nothing of Valve's ships with radarclip.
+   * An icon that fails to load falls back to the name or the drawn symbol.
+   */
+  icon?: ((name: string) => string | undefined) | false
+}
+
+const GAME_ICONS = 'https://cdn.jsdelivr.net/gh/Juknum/counter-strike-icons@899560e1a023fcbd1a090fa4fcbf1119a68145f2/cs2/panorama/images/'
+const KILL_ICON: Record<string, string> = { headshot: 'icon_headshot', wallbang: 'penetrate', noscope: 'noscope', smoke: 'smoke_kill', blind: 'blind_kill' }
+/** Default kill-feed icons: the game's own files (weapons and death-notice symbols). */
+export const gameIcon = (name: string) => {
+  if (KILL_ICON[name]) return `${GAME_ICONS}hud/deathnotice/${KILL_ICON[name]}.svg`
+  if (name === 'world' || !name) return undefined
+  const file = name === 'knifegg' || (/^(knife|bayonet)/.test(name) && !name.startsWith('knife_')) ? 'knife' : name
+  return `${GAME_ICONS}icons/equipment/${file}.svg`
+}
+
+/** Fallback kill symbols drawn for radarclip (1.5px outline on a 20px grid) when the game's icons don't load. */
+const SYMBOL: Record<'headshot' | 'wallbang' | 'noscope' | 'smoke' | 'blind', { d: string; fill?: string; heavy?: string }> = {
+  headshot: { d: 'M16.5 10a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0zM10 1.5v3M10 15.5v3M1.5 10h3M15.5 10h3', fill: 'M12.2 10a2.2 2.2 0 1 1-4.4 0 2.2 2.2 0 0 1 4.4 0z' },
+  wallbang: { d: 'M2 10h14.5M13.5 7l3.5 3-3.5 3', heavy: 'M10 3v14' },
+  noscope: { d: 'M16.5 10a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0zM10 5v10M5 10h10', heavy: 'M3.5 16.5l13-13' },
+  smoke: { d: 'M5.5 15.5h9a3.5 3.5 0 0 0 .4-7 4.8 4.8 0 0 0-9.3-.9A3.9 3.9 0 0 0 5.5 15.5z' },
+  blind: { d: 'M2 10s3-5 8-5 8 5 8 5-3 5-8 5-8-5-8-5zM12.2 10a2.2 2.2 0 1 1-4.4 0 2.2 2.2 0 0 1 4.4 0z', heavy: 'M3.5 16.5l13-13' },
 }
 
 export type PlayerEventName = 'time' | 'play' | 'pause' | 'ended' | 'load' | 'view'
@@ -152,6 +179,7 @@ export class RadarclipPlayer {
   private shots: ShotView[] = []
   private kills: Extract<Event, { type: 'kill' }>[] = []
   private damage: DamageGroup[] = []
+  private icons = new Map<string, HTMLImageElement | null>()
   private fitBox: [number, number, number] = [0, 0, 1024]
   /** Visible square of the radar: x, y, size in radar px (0…1024). */
   private view: [number, number, number] = [0, 0, 1024]
@@ -258,6 +286,29 @@ export class RadarclipPlayer {
       }
     }
     return groups
+  }
+
+  /** A kill-feed icon once loaded; starts the download on first use and redraws when it lands. */
+  private icon(weapon: string): HTMLImageElement | null {
+    if (this.icons.has(weapon)) return this.icons.get(weapon) ?? null
+    const src = this.opts.icon === false ? undefined : (this.opts.icon ?? gameIcon)(weapon)
+    this.icons.set(weapon, null)
+    if (!src || typeof Image === 'undefined' || typeof fetch === 'undefined') return null
+    // The icons carry only a viewBox, which leaves an <img> without a size: read the SVG, give
+    // it the viewBox's size, then decode it as an image.
+    void fetch(src)
+      .then((res) => (res.ok ? res.text() : Promise.reject(new Error(String(res.status)))))
+      .then(async (svg) => {
+        const vb = /viewBox="[\d.\s-]*?\s([\d.]+)\s+([\d.]+)"/.exec(svg)
+        if (vb && !/<svg[^>]*\swidth=/.test(svg)) svg = svg.replace('<svg', `<svg width="${vb[1]}" height="${vb[2]}"`)
+        const img = new Image()
+        img.src = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }))
+        await img.decode()
+        this.icons.set(weapon, img)
+        if (this.replay) this.render()
+      })
+      .catch(() => {}) // stays a name
+    return null
   }
 
   /** Where a player was at `tick`, or the last place before it with a position (up to 1 s back). */
@@ -602,6 +653,12 @@ export class RadarclipPlayer {
     if (player != null && player === r.clip.focus[0]) return this.theme.me
     side = side ?? (player != null ? r.players[player]?.side : undefined)
     return side === 'CT' ? this.theme.ct : side === 'T' ? this.theme.t : '#dddddd'
+  }
+
+  /** A player's side colour, also for the focus player (the kill feed keeps sides). */
+  private sideColor(player: number) {
+    const side = this.replay.players[player]?.side
+    return side === 'CT' ? this.theme.ct : side === 'T' ? this.theme.t : this.theme.muted
   }
 
   render() {
@@ -1071,35 +1128,99 @@ export class RadarclipPlayer {
     g.fillStyle = this.theme.muted
     g.fillText(sub, pad + 14 * k + wMain, pad + 13 * k)
 
-    // Kill feed.
+    // Kill feed, in the game's order: [blind] attacker [+ flash assister] weapon [no-scope, smoke,
+    // wallbang, headshot] victim. Names keep their side colours; the focus player's rows get an outline.
+    const focusIx = r.clip.focus[0]
+    const H_ROW = 22 * k, ICON_H = 14 * k, SYM = 13 * k, GAP = 5 * k
+    const symbol = (name: keyof typeof SYMBOL, x: number, cy: number) => {
+      const img = this.icon(name)
+      if (img) {
+        const h = SYM * 1.1, w = (img.naturalWidth / img.naturalHeight) * h || h
+        g.drawImage(img, x + (SYM - w) / 2, cy - h / 2, w, h)
+        return
+      }
+      if (typeof Path2D === 'undefined') return
+      const sym = SYMBOL[name], sc = SYM / 20
+      g.save()
+      g.translate(x, cy - SYM / 2)
+      g.scale(sc, sc)
+      g.strokeStyle = this.theme.fg
+      g.lineCap = 'round'
+      g.lineJoin = 'round'
+      g.lineWidth = 1.5
+      g.stroke(new Path2D(sym.d))
+      if (sym.heavy) {
+        g.lineWidth = name === 'wallbang' ? 3 : 1.8
+        g.stroke(new Path2D(sym.heavy))
+      }
+      if (sym.fill) {
+        g.fillStyle = this.theme.fg
+        g.fill(new Path2D(sym.fill))
+      }
+      g.restore()
+    }
     let y = pad
     for (const e of this.kills) {
       if (e.t > t || e.t <= t - FEED * r.tickrate) continue
-      const a = e.attacker != null ? r.players[e.attacker]?.name : 'world'
-      const v = r.players[e.victim]?.name ?? ''
-      const w = `${weaponName(e.weapon)}${e.hs ? ' ◎' : ''}`
-      font(12, 500)
-      const wa = g.measureText(a ?? '').width, ww = g.measureText(w).width, wv = g.measureText(v).width
-      const total = wa + ww + wv + 26 * k
+      type Part = { w: number; draw: (x: number, cy: number) => void }
+      const parts: Part[] = []
+      const name = (ix: number | undefined, fallback: string) => {
+        const str = ix != null ? r.players[ix]?.name ?? fallback : fallback
+        font(12, ix === focusIx ? 600 : 500)
+        const w = g.measureText(str).width
+        const bold = ix === focusIx
+        parts.push({ w, draw: (x, cy) => { font(12, bold ? 600 : 500); g.fillStyle = ix != null ? this.sideColor(ix) : this.theme.muted; g.fillText(str, x, cy) } })
+      }
+      const sym = (n: keyof typeof SYMBOL) => parts.push({ w: SYM, draw: (x, cy) => symbol(n, x, cy) })
+      const picture = (weapon: string, h: number, mirror: boolean) => {
+        const img = this.icon(weapon)
+        if (img && img.naturalWidth) {
+          const w = (img.naturalWidth / img.naturalHeight) * h
+          parts.push({ w, draw: (x, cy) => {
+            g.save()
+            // The pictures point left; mirrored, the barrel points at the victim.
+            if (mirror) { g.translate(x + w, cy - h / 2); g.scale(-1, 1) } else g.translate(x, cy - h / 2)
+            g.drawImage(img, 0, 0, w, h)
+            g.restore()
+          } })
+          return true
+        }
+        return false
+      }
+      if (e.blind) sym('blind')
+      name(e.attacker, 'world')
+      if (e.assister != null) {
+        font(12, 500)
+        const plus = '+'
+        parts.push({ w: g.measureText(plus).width, draw: (x, cy) => { font(12, 500); g.fillStyle = this.theme.muted; g.fillText(plus, x, cy) } })
+        if (e.flashassist && !picture('flashbang_assist', SYM, false)) sym('blind')
+        name(e.assister, '')
+      }
+      if (!picture(e.weapon, ICON_H, true)) {
+        const w = weaponName(e.weapon)
+        font(12, 500)
+        parts.push({ w: g.measureText(w).width, draw: (x, cy) => { font(12, 500); g.fillStyle = this.theme.muted; g.fillText(w, x, cy) } })
+      }
+      if (e.noscope) sym('noscope')
+      if (e.smoke) sym('smoke')
+      if ((e.pen ?? 0) > 0) sym('wallbang')
+      if (e.hs) sym('headshot')
+      name(e.victim, '')
+      const total = parts.reduce((a, p) => a + p.w, 0) + GAP * (parts.length - 1) + 16 * k
       const x = W - pad - total
-      pill(x, y, total, 22 * k)
-      const mine = r.clip.focus[0] != null && (e.attacker === r.clip.focus[0] || e.victim === r.clip.focus[0])
-      if (mine) {
+      pill(x, y, total, H_ROW)
+      if (focusIx != null && (e.attacker === focusIx || e.victim === focusIx)) {
         g.strokeStyle = this.theme.me
         g.lineWidth = k
         g.stroke()
       }
       let cx = x + 8 * k
-      const cy = y + 11 * k
-      g.fillStyle = this.color(e.attacker)
-      g.fillText(a ?? '', cx, cy)
-      cx += wa + 5 * k
-      g.fillStyle = this.theme.muted
-      g.fillText(w, cx, cy)
-      cx += ww + 5 * k
-      g.fillStyle = this.color(e.victim)
-      g.fillText(v, cx, cy)
-      y += 25 * k
+      const cy = y + H_ROW / 2
+      for (const p of parts) {
+        p.draw(cx, cy)
+        cx += p.w + GAP
+      }
+      y += H_ROW + 3 * k
     }
 
     // Mark label near its moment.
