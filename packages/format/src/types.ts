@@ -57,7 +57,11 @@ interface Pos {
 }
 
 export type Event =
-  | ({ type: 'kill'; t: number; attacker?: number; victim: number; weapon: string; hs: boolean } & Pos)
+  | ({
+      type: 'kill'; t: number; attacker?: number; victim: number; weapon: string; hs: boolean
+      /** Optional, left out when they don't apply. */
+      assister?: number; flashassist?: boolean; pen?: number; noscope?: boolean; smoke?: boolean; blind?: boolean
+    } & Pos)
   | { type: 'hurt'; t: number; attacker?: number; victim: number; dmg: number; weapon: string }
   | { type: 'blind'; t: number; victim: number; by?: number; until: number }
   | ({ type: 'smoke' | 'molotov'; t: number; by?: number; until: number } & Pos)

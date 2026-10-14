@@ -94,6 +94,23 @@ pub enum Event {
         x: i64,
         y: i64,
         z: i64,
+        /// The player credited with the assist.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        assister: Option<u32>,
+        /// The assist was a flash.
+        #[serde(default, skip_serializing_if = "is_false")]
+        flashassist: bool,
+        /// Surfaces the bullet went through (a wallbang when above 0).
+        #[serde(default, skip_serializing_if = "is_zero")]
+        pen: u32,
+        #[serde(default, skip_serializing_if = "is_false")]
+        noscope: bool,
+        /// Shot through a smoke.
+        #[serde(default, skip_serializing_if = "is_false")]
+        smoke: bool,
+        /// The attacker was blind.
+        #[serde(default, skip_serializing_if = "is_false")]
+        blind: bool,
     },
     Hurt {
         t: i64,
@@ -117,6 +134,14 @@ pub enum Event {
     Plant { t: i64, #[serde(default, skip_serializing_if = "Option::is_none")] by: Option<u32>, x: i64, y: i64, z: i64 },
     Defuse { t: i64, #[serde(default, skip_serializing_if = "Option::is_none")] by: Option<u32> },
     Explode { t: i64, #[serde(default, skip_serializing_if = "Option::is_none")] by: Option<u32> },
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+
+fn is_zero(v: &u32) -> bool {
+    *v == 0
 }
 
 impl Event {

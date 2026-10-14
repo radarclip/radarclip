@@ -37,3 +37,18 @@ fn fixtures_load_and_roundtrip() {
     }
     assert!(seen >= 2, "expected fixtures in {dir}");
 }
+
+/// Optional kill fields stay out of the JSON when they don't apply, and read back when they do.
+#[test]
+fn kill_details_are_optional() {
+    let plain: Event = serde_json::from_str(r#"{"type":"kill","t":5,"attacker":1,"victim":2,"weapon":"ak47","hs":true,"x":1,"y":2,"z":3}"#).unwrap();
+    let json = serde_json::to_string(&plain).unwrap();
+    for key in ["assister", "flashassist", "pen", "noscope", "smoke", "blind"] {
+        assert!(!json.contains(key), "{key} written for a plain kill: {json}");
+    }
+    let full = r#"{"type":"kill","t":5,"attacker":1,"victim":2,"weapon":"awp","hs":false,"x":1,"y":2,"z":3,"assister":4,"flashassist":true,"pen":2,"noscope":true,"smoke":true,"blind":true}"#;
+    let e: Event = serde_json::from_str(full).unwrap();
+    let Event::Kill { assister, flashassist, pen, noscope, smoke, blind, .. } = &e else { panic!("not a kill") };
+    assert_eq!((*assister, *flashassist, *pen, *noscope, *smoke, *blind), (Some(4), true, 2, true, true, true));
+    assert_eq!(serde_json::from_str::<Event>(&serde_json::to_string(&e).unwrap()).unwrap(), e);
+}

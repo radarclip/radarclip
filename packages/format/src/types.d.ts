@@ -60,6 +60,13 @@ export type Event = ({
     victim: number;
     weapon: string;
     hs: boolean;
+    /** Optional, left out when they don't apply. */
+    assister?: number;
+    flashassist?: boolean;
+    pen?: number;
+    noscope?: boolean;
+    smoke?: boolean;
+    blind?: boolean;
 } & Pos) | {
     type: 'hurt';
     t: number;
