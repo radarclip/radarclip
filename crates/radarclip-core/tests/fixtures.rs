@@ -1,7 +1,7 @@
 //! Every reference clip in spec/fixtures must load, survive a save/load round trip and
 //! decode into tracks that stay inside the clip.
 
-use radarclip_core::{decode_track, Clip, FORMAT};
+use radarclip_core::{decode_track, Clip, Event, FORMAT};
 
 #[test]
 fn fixtures_load_and_roundtrip() {
@@ -23,6 +23,15 @@ fn fixtures_load_and_roundtrip() {
             for s in frames.iter().flatten() {
                 assert!(s.weapon < clip.weapons.len() as i64 && s.place < clip.places.len() as i64);
             }
+        }
+        // Positioned events must have a real position (regression: grenade events at the origin).
+        for e in &clip.events {
+            let at_origin = match e {
+                Event::Smoke { x, y, z, .. } | Event::Molotov { x, y, z, .. } | Event::Flash { x, y, z, .. }
+                | Event::He { x, y, z, .. } | Event::Plant { x, y, z, .. } | Event::Kill { x, y, z, .. } => (*x, *y, *z) == (0, 0, 0),
+                _ => false,
+            };
+            assert!(!at_origin, "{}: {e:?} at the map origin", path.display());
         }
         seen += 1;
     }
