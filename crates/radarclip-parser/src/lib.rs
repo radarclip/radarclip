@@ -418,7 +418,13 @@ impl Match {
         };
         let rel = |t: i32| (t - r0) as i64;
         let inside = |e: &GameEvent| e.tick >= t0 && e.tick <= t1;
-        let pos = |e: &GameEvent, p: &str| (fint(e, &format!("{p}X")), fint(e, &format!("{p}Y")), fint(e, &format!("{p}Z")));
+        // Grenade events carry their own position as x/y/z; player positions come as user_X/Y/Z.
+        // An event without one is dropped rather than drawn at the map origin.
+        let pos = |e: &GameEvent, x: &str, y: &str, z: &str| -> Option<(i64, i64, i64)> {
+            Some((fnum(e, x)?.round() as i64, fnum(e, y)?.round() as i64, fnum(e, z)?.round() as i64))
+        };
+        let user_pos = |e: &GameEvent| pos(e, "user_X", "user_Y", "user_Z");
+        let nade_pos = |e: &GameEvent| pos(e, "x", "y", "z");
 
         let mut events = vec![];
         let mut shots: Vec<(i64, u32, i64)> = vec![];
@@ -428,7 +434,7 @@ impl Match {
                 // Deaths from the whole round so far stay on the map.
                 "player_death" if e.tick >= r0 && e.tick <= t1 => {
                     let Some(victim) = who(e, "user") else { continue };
-                    let (x, y, z) = pos(e, "user_");
+                    let Some((x, y, z)) = user_pos(e) else { continue };
                     events.push(Event::Kill {
                         t, attacker: who(e, "attacker"), victim, x, y, z,
                         weapon: fstr(e, "weapon").unwrap_or_default().to_string(),
@@ -450,7 +456,7 @@ impl Match {
                     }
                 }
                 "flashbang_detonate" | "hegrenade_detonate" if inside(e) => {
-                    let (x, y, z) = pos(e, "");
+                    let Some((x, y, z)) = nade_pos(e) else { continue };
                     let by = who(e, "user");
                     events.push(if e.name == "flashbang_detonate" { Event::Flash { t, by, x, y, z } } else { Event::He { t, by, x, y, z } });
                 }
@@ -467,13 +473,13 @@ impl Match {
                     if until < t0 {
                         continue;
                     }
-                    let (x, y, z) = pos(e, "");
+                    let Some((x, y, z)) = nade_pos(e) else { continue };
                     let (by, until) = (who(e, "user"), rel(until));
                     events.push(if end_name == "smokegrenade_expired" { Event::Smoke { t, by, until, x, y, z } } else { Event::Molotov { t, by, until, x, y, z } });
                 }
                 // A bomb planted before the clip starts is still on the ground.
                 "bomb_planted" if e.tick >= r0 && e.tick <= t1 => {
-                    let (x, y, z) = pos(e, "user_");
+                    let Some((x, y, z)) = user_pos(e) else { continue };
                     events.push(Event::Plant { t, by: who(e, "user"), x, y, z });
                 }
                 "bomb_defused" if inside(e) => events.push(Event::Defuse { t, by: who(e, "user") }),
