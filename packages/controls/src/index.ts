@@ -6,19 +6,20 @@ const ICON = {
   pause: '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z" fill="currentColor"/></svg>',
 }
 const CSS = `
-  :host { display: block; color: var(--radarclip-fg, #e7e9ee); font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  .bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--radarclip-panel, #161920);
-    border-top: 1px solid var(--radarclip-border, #2a2f3a); }
-  button { font: 600 12px/1 inherit; color: inherit; background: transparent; border: 1px solid var(--radarclip-border, #2a2f3a);
+  :host { display: block; color: var(--radarclip-fg, #e8ebef); font: 13px/1.4 Geist, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--radarclip-panel, #14171c);
+    border-top: 1px solid var(--radarclip-line, #2a2f38); }
+  button { font: 600 12px/1 inherit; color: inherit; background: transparent; border: 1px solid var(--radarclip-border, #5b6470);
     border-radius: 6px; padding: 6px 8px; cursor: pointer; display: flex; align-items: center; min-height: 30px; }
-  button:hover { border-color: var(--radarclip-muted, #8d95a5); }
+  button:hover { border-color: var(--radarclip-muted, #9aa3ae); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--radarclip-me, #9d8cff); outline-offset: 2px; }
   button.play { border: 0; padding: 4px; }
   button svg { pointer-events: none; }
   button[hidden] { display: none; }
-  .time { font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--radarclip-muted, #8d95a5); min-width: 52px; text-align: right; }
+  .time { font: 500 12px/1 "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; color: var(--radarclip-muted, #9aa3ae); min-width: 52px; text-align: right; }
   .track { position: relative; flex: 1; min-width: 60px; height: 30px; display: flex; align-items: center; }
-  input { width: 100%; margin: 0; accent-color: var(--radarclip-fg, #e7e9ee); }
-  .mark { position: absolute; top: 2px; width: 2px; height: 7px; border-radius: 1px; background: var(--radarclip-me, #ff3df2);
+  input { width: 100%; margin: 0; accent-color: var(--radarclip-me, #9d8cff); }
+  .mark { position: absolute; top: 2px; width: 2px; height: 7px; border-radius: 1px; background: var(--radarclip-me, #9d8cff);
     pointer-events: none; transform: translateX(-1px); }
   @media (max-width: 480px) { .bar { gap: 5px; padding: 6px; } .time { min-width: 44px; } }
 `

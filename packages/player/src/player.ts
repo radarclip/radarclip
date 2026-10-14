@@ -9,7 +9,12 @@ export interface Theme {
   muted: string
 }
 
-export const DEFAULT_THEME: Theme = { ct: '#5aa9e6', t: '#e8a33d', me: '#ff3df2', bg: '#0e1014', fg: '#e7e9ee', muted: '#8d95a5' }
+/** The radarclip design system's dark map colours: side colours, `focus` for the player you follow. */
+export const DEFAULT_THEME: Theme = { ct: '#5aa9e6', t: '#e8a33d', me: '#9d8cff', bg: '#0e1014', fg: '#e8ebef', muted: '#9aa3ae' }
+
+/** Text on the map: Geist when the page loads it, the system face otherwise. */
+const SANS = 'Geist, system-ui, -apple-system, "Segoe UI", sans-serif'
+const MONO = '"Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace'
 
 export type RadarSource = Radar | ((map: string) => Radar | undefined | Promise<Radar | undefined>)
 
@@ -144,6 +149,8 @@ export class RadarclipPlayer {
       this.resizeObserver.observe(canvas)
     }
     if (opts.interactive !== false) this.attachPointer()
+    // Web fonts arrive after the first frame; draw again once they are in.
+    if (typeof document !== 'undefined') document.fonts?.addEventListener?.('loadingdone', () => this.replay && this.render())
   }
 
   setTheme(theme: Partial<Theme>) {
@@ -791,7 +798,7 @@ export class RadarclipPlayer {
     const placed: [number, number, number, number][] = []
     const lh = 11 * u
     for (const l of labels.sort((a, b) => b.prio - a.prio)) {
-      g.font = `${l.bold ? 700 : 500} ${9 * u}px system-ui, -apple-system, "Segoe UI", sans-serif`
+      g.font = `${l.bold ? 600 : 500} ${9 * u}px ${SANS}`
       const w = g.measureText(l.str).width
       const off = l.gap + 3 * u
       const spots: [number, number][] = [
@@ -829,7 +836,7 @@ export class RadarclipPlayer {
     const k = dpr * Math.max(1, this.canvas.clientWidth / 640 || 1)
     const pad = 8 * k
     const font = (size: number, weight = 500, mono = false) =>
-      (g.font = `${weight} ${size * k}px ${mono ? 'ui-monospace, SFMono-Regular, Menlo, monospace' : 'system-ui, -apple-system, "Segoe UI", sans-serif'}`)
+      (g.font = `${weight} ${size * k}px ${mono ? MONO : SANS}`)
     const pill = (x: number, y: number, w: number, h: number) => {
       g.fillStyle = 'rgba(0,0,0,.6)'
       g.beginPath()
@@ -840,7 +847,7 @@ export class RadarclipPlayer {
     // Clock: round time, or the bomb timer once planted.
     const planted = bomb && !bomb.state
     const left = planted ? BOMB_TIME - (t - bomb.planted) / r.tickrate : ROUND_TIME - t / r.tickrate
-    const main = `${planted ? '💣 ' : ''}${clock(left)}`
+    const main = clock(left)
     const sub = `R${r.clip.round}`
     font(15, 600, true)
     const wMain = g.measureText(main).width
@@ -848,7 +855,7 @@ export class RadarclipPlayer {
     const wSub = g.measureText(sub).width
     pill(pad, pad, wMain + wSub + 22 * k, 26 * k)
     font(15, 600, true)
-    g.fillStyle = planted ? '#ff5a4a' : this.theme.fg
+    g.fillStyle = planted ? '#ff2b2b' : this.theme.fg
     g.textBaseline = 'middle'
     g.fillText(main, pad + 8 * k, pad + 13 * k)
     font(11, 500)
