@@ -11,7 +11,8 @@ const EVENTS: PlayerEventName[] = ['load', 'time', 'play', 'pause', 'ended', 'vi
  *
  * `el.player` is the RadarclipPlayer; its events are re-dispatched on the element as
  * `radarclip:load`, `radarclip:time`, `radarclip:play`, `radarclip:pause`, `radarclip:ended`,
- * `radarclip:view` (detail: seconds), so controls and apps can connect to it.
+ * `radarclip:view` (detail: seconds), and every change once more as `radarclip:change`
+ * (detail: `{ state, changed }`, see `RadarclipPlayer.onChange`), so controls and apps can connect.
  * Colours: --radarclip-ct, -t, -me, -bg, -fg, -muted.
  */
 export class RadarclipPlayerElement extends HTMLElement {
@@ -30,6 +31,8 @@ export class RadarclipPlayerElement extends HTMLElement {
     for (const name of EVENTS) {
       this.player.on(name, (seconds) => this.dispatchEvent(new CustomEvent(`radarclip:${name}`, { detail: seconds })))
     }
+    this.player.onChange((state, changed) =>
+      this.dispatchEvent(new CustomEvent('radarclip:change', { detail: { state, changed: [...changed] } })))
   }
 
   connectedCallback() {
