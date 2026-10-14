@@ -67,6 +67,8 @@ const CONE = 32 // degrees either side of where a player looks
 const CONE_LEN = 7.2 // cone length in player radii (the focus player's: 9.2)
 const KILL_LINE = 1.5
 const FEED = 5
+const DMG_GAP = 1 // seconds between hits that still add to the same total
+const DMG_SHOW = 1.6 // seconds a total stays after its last hit (the last 0.4 s fading)
 const MIN_VIEW_WORLD = 400 // closest zoom: ~10 m across
 const PLAYER_RADIUS = 16 // world units: the player hitbox is 32 units (~0.8 m) wide
 const MIN_DOT = 4.5 // CSS px radius, so players stay easy to see at overview zoom; real size wins when zoomed in
@@ -92,6 +94,7 @@ const withAlpha = (color: string, a: number) => {
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`
 }
 const DANGER = '#ff6b5e'
+const easeOut = (k: number) => 1 - Math.pow(1 - k, 3)
 /** Utility keeps its in-game reading (design system util-* tokens). */
 const UTIL = { smoke: '#cfd3d8', fire: '#ff5a1f', flash: '#ffffff', he: '#9cff57' }
 const clock = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.floor(Math.max(0, s) % 60)).padStart(2, '0')}`
@@ -99,6 +102,16 @@ const clock = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.f
 /** Radars registered by map name (e.g. by a page that hosts them). */
 const registry = new Map<string, Radar>()
 let resolver: ((map: string) => Radar | undefined | Promise<Radar | undefined>) | undefined
+
+/** Hits on one victim less than DMG_GAP apart, shown as one running total. */
+interface DamageGroup {
+  victim: number
+  hits: { t: number; d: number }[]
+  /** Tick of the kill that ended this fight, if any. */
+  killAt?: number
+  hs: boolean
+  kill?: Extract<Event, { type: 'kill' }>
+}
 
 interface ShotView {
   t: number
@@ -138,6 +151,7 @@ export class RadarclipPlayer {
   private resizeObserver?: ResizeObserver
   private shots: ShotView[] = []
   private kills: Extract<Event, { type: 'kill' }>[] = []
+  private damage: DamageGroup[] = []
   private fitBox: [number, number, number] = [0, 0, 1024]
   /** Visible square of the radar: x, y, size in radar px (0…1024). */
   private view: [number, number, number] = [0, 0, 1024]
@@ -198,6 +212,7 @@ export class RadarclipPlayer {
     const window = 0.07 * r.tickrate
     this.shots = r.shots.map((s) => ({ ...s, hit: hits.find((h) => h.attacker === s.p && Math.abs(h.t - s.t) <= window)?.victim }))
     this.kills = r.events.filter((e): e is Extract<Event, { type: 'kill' }> => e.type === 'kill')
+    this.damage = this.groupDamage(r)
     this.fitBox = this.clampView(this.computeFit())
     // Keep a hand-picked view when switching rounds on the same map.
     if (!(this._zoom === 'free' && this.lastMap === clip.map)) this.applyZoom()
@@ -208,6 +223,51 @@ export class RadarclipPlayer {
     this._floor = this.split != null && me && me.z < this.split ? 'lower' : 'upper'
     this.render()
     this.emit('load')
+  }
+
+  /**
+   * Running damage totals: hits on one player less than DMG_GAP apart add up. Each hit is
+   * capped at the health the victim had (the game reports full weapon damage on a low player).
+   */
+  private groupDamage(r: Replay): DamageGroup[] {
+    const groups: DamageGroup[] = []
+    const open = new Map<number, DamageGroup>()
+    const hp = new Map<number, number>()
+    for (const e of r.events) {
+      if (e.type !== 'hurt' || e.dmg <= 0) continue
+      const before = hp.get(e.victim) ?? stateAt(r, e.victim, e.t - 1)?.hp ?? 100
+      const d = Math.min(e.dmg, Math.max(0, before))
+      hp.set(e.victim, before - d)
+      if (d <= 0) continue
+      let grp = open.get(e.victim)
+      if (!grp || e.t - grp.hits[grp.hits.length - 1].t > DMG_GAP * r.tickrate) {
+        grp = { victim: e.victim, hits: [], hs: false }
+        groups.push(grp)
+        open.set(e.victim, grp)
+      }
+      grp.hits.push({ t: e.t, d })
+    }
+    for (const k of r.events) {
+      if (k.type !== 'kill') continue
+      // The killing hit can come after the last counted one (damage beyond the health left).
+      const grp = groups.find((g) => g.victim === k.victim && g.hits[0].t <= k.t + 2 && k.t - g.hits[g.hits.length - 1].t <= DMG_GAP * r.tickrate)
+      if (grp) {
+        grp.killAt = k.t
+        grp.hs = k.hs
+        grp.kill = k
+      }
+    }
+    return groups
+  }
+
+  /** Where a player was at `tick`, or the last place before it with a position (up to 1 s back). */
+  private lastPos(player: number, tick: number) {
+    const r = this.replay
+    for (let q = tick; q >= tick - r.tickrate; q -= r.step) {
+      const st = stateAt(r, player, q)
+      if (st && Number.isFinite(st.x) && st.x != null) return st
+    }
+    return null
   }
 
   private async resolveRadar(clip: Clip): Promise<Radar | undefined> {
@@ -725,7 +785,7 @@ export class RadarclipPlayer {
       line(x1, y1, x2, y2)
       g.globalAlpha = (v ? 0.9 : 0.55) * (1 - age / TRACER_LIFE)
       g.lineWidth = (v ? 1.4 : 1) * u
-      g.strokeStyle = v ? '#ffffff' : this.color(sh.p)
+      g.strokeStyle = this.color(sh.p)
       g.stroke()
     }
     g.globalAlpha = 1
@@ -928,6 +988,49 @@ export class RadarclipPlayer {
       g.fillStyle = l.fill
       g.fillText(l.str, spot[0], spot[1])
       g.globalAlpha = 1
+    }
+
+    // Damage: one running total above each victim, bumping on every hit, floating up as it fades.
+    for (const grp of this.damage) {
+      const first = grp.hits[0].t, last = grp.hits[grp.hits.length - 1].t
+      if (t < first || t > Math.max(last, grp.killAt ?? last) + DMG_SHOW * sec) continue
+      const done = grp.hits.filter((h) => h.t <= t)
+      const sum = done.reduce((a, h) => a + h.d, 0)
+      const lastHit = done[done.length - 1].t
+      const age = (t - Math.max(lastHit, grp.killAt != null && t >= grp.killAt ? grp.killAt : lastHit)) / sec
+      if (age > DMG_SHOW) continue
+      const killed = grp.killAt != null && t >= grp.killAt
+      // A kill has its own position; otherwise the victim's last known one (tracks can stop a
+      // few ticks before a death).
+      const pos = killed && grp.kill ? grp.kill : this.lastPos(grp.victim, Math.min(t, last))
+      if (!pos || !this.onFloor(pos.z)) continue
+      const [x, y] = this.px(pos.x, pos.y)
+      const fade = Math.min(1, (DMG_SHOW - age) / 0.4)
+      const rise = 10 * u * easeOut(Math.min(1, Math.max(0, (age - (DMG_SHOW - 0.4)) / 0.4)))
+      const bump = 1 + 0.3 * Math.max(0, 1 - age / 0.15)
+      const str = `${killed && grp.hs ? '◎ ' : ''}${sum}`
+      g.save()
+      g.translate(x, y - R - 7 * u - rise)
+      g.scale(bump, bump)
+      g.globalAlpha = fade
+      g.font = `700 ${10.5 * u}px ${SANS}`
+      g.textAlign = 'center'
+      g.lineJoin = 'round'
+      g.lineWidth = 2.8 * u
+      g.strokeStyle = th.bg
+      g.strokeText(str, 0, 0)
+      g.fillStyle = killed ? DANGER : '#ffffff'
+      g.fillText(str, 0, 0)
+      if (done.length > 1) {
+        const w = g.measureText(str).width
+        g.font = `500 ${8 * u}px ${MONO}`
+        g.textAlign = 'left'
+        const n = `×${done.length}`
+        g.strokeText(n, w / 2 + 3 * u, 0)
+        g.fillStyle = th.muted
+        g.fillText(n, w / 2 + 3 * u, 0)
+      }
+      g.restore()
     }
 
     g.setTransform(1, 0, 0, 1, 0, 0)
