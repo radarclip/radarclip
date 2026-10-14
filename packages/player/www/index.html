@@ -19,7 +19,7 @@
 <body>
 <main>
   <h1>radarclip player</h1>
-  <p>Reference clips from <code>spec/fixtures</code>, or drop a <code>.radarclip</code> file. Radars from <code>www/radars/</code> (run <code>scripts/local-radars.mjs</code>).</p>
+  <p>Reference clips from <code>spec/fixtures</code>, or drop a <code>.radarclip</code> file. Radars load from <code>www/radars/</code> when present (<code>scripts/local-radars.mjs</code>), otherwise from <code>@radarclip/radars</code>' default host.</p>
   <div class="row">
     <select id="pick">
       <option value="../../../spec/fixtures/ancient-r7-short.radarclip.json">Ancient R7, 20 s</option>
@@ -31,6 +31,8 @@
 </main>
 <script type="module">
 import { RadarclipPlayer, readClip } from '../dist/radarclip-player.js'
+import { radars } from '../../radars/dist/index.js'
+RadarclipPlayer.radarResolver = radars()
 const el = document.getElementById('player')
 async function radarFor(map) {
   const r = await fetch(`radars/${map}.json`)

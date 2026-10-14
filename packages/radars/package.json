@@ -1,0 +1,18 @@
+{
+  "name": "@radarclip/radars",
+  "version": "0.1.0",
+  "description": "CS2 radar overview transforms by map name; radar images load at runtime from a configurable base URL",
+  "license": "MIT",
+  "type": "module",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "update": "node scripts/update.mjs"
+  },
+  "dependencies": {
+    "@radarclip/format": "workspace:*"
+  }
+}

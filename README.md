@@ -12,7 +12,8 @@ compressed, a whole round ~8 KB. Small enough to keep, embed in a page, or send 
 - **WebAssembly:** `radarclip-wasm` parses demos in the browser; demos never leave the machine.
 - **TypeScript:** `@radarclip/format` (read/write, decode, interpolate) and `@radarclip/player`
   (canvas player and `<radarclip-player>` element, 23 KB minified, no dependencies).
-- **Planned:** Python bindings, hosted radars.
+- **Radars:** `@radarclip/radars` knows every map's overview transform and where to load its radar.
+- **Planned:** Python bindings.
 
 ## Player
 
@@ -20,7 +21,8 @@ compressed, a whole round ~8 KB. Small enough to keep, embed in a page, or send 
 <radarclip-player src="r7.radarclip"></radarclip-player>
 <script type="module">
   import { RadarclipPlayer } from '@radarclip/player'
-  RadarclipPlayer.registerRadar('de_ancient', { pos_x: -2953, pos_y: 2164, scale: 5, image: '/radars/de_ancient.png' })
+  import { radars } from '@radarclip/radars'
+  RadarclipPlayer.radarResolver = radars()   // or radars('https://your.host/radars')
 </script>
 ```
 

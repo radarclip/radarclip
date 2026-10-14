@@ -26,6 +26,12 @@ importers:
         specifier: workspace:*
         version: link:../format
 
+  packages/radars:
+    dependencies:
+      '@radarclip/format':
+        specifier: workspace:*
+        version: link:../format
+
 packages:
 
   '@esbuild/aix-ppc64@0.25.12':
