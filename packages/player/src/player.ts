@@ -41,7 +41,7 @@ const KILL_LINE = 1.5
 const FEED = 5
 const MIN_VIEW_WORLD = 400 // closest zoom: ~10 m across
 const PLAYER_RADIUS = 16 // world units: the player hitbox is 32 units (~0.8 m) wide
-const MIN_DOT = 3 // CSS px, so players stay visible on the whole map
+const MIN_DOT = 4.5 // CSS px radius, so players stay easy to see at overview zoom; real size wins when zoomed in
 const GRENADE_HITS = new Set(['hegrenade', 'inferno', 'molotov', 'world', 'incgrenade'])
 
 const WEAPON: Record<string, string> = {
