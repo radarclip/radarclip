@@ -13,6 +13,7 @@ const CSS = `
     border-radius: 6px; padding: 6px 8px; cursor: pointer; display: flex; align-items: center; min-height: 30px; }
   button:hover { border-color: var(--radarclip-muted, #8d95a5); }
   button.play { border: 0; padding: 4px; }
+  button svg { pointer-events: none; }
   button[hidden] { display: none; }
   .time { font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--radarclip-muted, #8d95a5); min-width: 52px; text-align: right; }
   .track { position: relative; flex: 1; min-width: 60px; height: 30px; display: flex; align-items: center; }
@@ -140,16 +141,25 @@ export class RadarclipControlsElement extends HTMLElement {
     this.sync()
   }
 
+  /** Runs every frame while playing: only touch the DOM where something changed. Replacing a
+   *  button's content under the cursor between mousedown and mouseup swallows the click. */
   private sync() {
     const p: RadarclipPlayer | undefined = this._target?.player
     if (!p?.replay) return
     ;(this.el.range as HTMLInputElement).value = String(p.time)
-    this.el.time.textContent = `${p.time.toFixed(1)} s`
-    this.el.play.innerHTML = p.playing ? ICON.pause : ICON.play
-    this.el.play.setAttribute('aria-label', p.playing ? 'Pause' : 'Play')
-    this.el.speed.textContent = `${p.speed}×`
-    this.el.floor.textContent = p.floor === 'upper' ? 'Upper' : 'Lower'
-    this.el.zoom.textContent = p.zoom === 'fit' ? 'Map' : 'Fit'
+    this.text(this.el.time, `${p.time.toFixed(1)} s`)
+    if (this.el.play.dataset.state !== String(p.playing)) {
+      this.el.play.dataset.state = String(p.playing)
+      this.el.play.innerHTML = p.playing ? ICON.pause : ICON.play
+      this.el.play.setAttribute('aria-label', p.playing ? 'Pause' : 'Play')
+    }
+    this.text(this.el.speed, `${p.speed}×`)
+    this.text(this.el.floor, p.floor === 'upper' ? 'Upper' : 'Lower')
+    this.text(this.el.zoom, p.zoom === 'fit' ? 'Map' : 'Fit')
+  }
+
+  private text(el: HTMLElement, value: string) {
+    if (el.textContent !== value) el.textContent = value
   }
 }
 
