@@ -40,6 +40,8 @@ const TRAIL = 2.5 // seconds of movement drawn behind a player
 const KILL_LINE = 1.5
 const FEED = 5
 const MIN_VIEW_WORLD = 400 // closest zoom: ~10 m across
+const PLAYER_RADIUS = 16 // world units: the player hitbox is 32 units (~0.8 m) wide
+const MIN_DOT = 3 // CSS px, so players stay visible on the whole map
 const GRENADE_HITS = new Set(['hegrenade', 'inferno', 'molotov', 'world', 'incgrenade'])
 
 const WEAPON: Record<string, string> = {
@@ -630,7 +632,10 @@ export class RadarclipPlayer {
       }
     }
 
-    // Players: trail, view direction, blind ring, body, label.
+    // Players: trail, view direction, blind ring, body, label. Bodies are drawn at the real
+    // player width, never smaller than MIN_DOT on screen.
+    const R = Math.max(PLAYER_RADIUS / this.radar.scale, MIN_DOT * u)
+    const edge = Math.min(1.2 * u, R * 0.3)
     const focus = r.clip.focus
     const me = focus.length ? stateAt(r, focus[0], t) : null
     const bodies: (() => void)[] = []
@@ -642,9 +647,9 @@ export class RadarclipPlayer {
       const [x, y] = this.px(st.x, st.y)
       if (!this.onFloor(st.z)) {
         bodies.push(() => {
-          circle(x, y, 5.5 * u)
+          circle(x, y, R)
           g.globalAlpha = 0.45
-          g.lineWidth = 1.2 * u
+          g.lineWidth = edge
           g.strokeStyle = col
           g.stroke()
           g.globalAlpha = 1
@@ -673,14 +678,14 @@ export class RadarclipPlayer {
         | undefined
       const yaw = (st.yaw * Math.PI) / 180
       bodies.push(() => {
-        const L = 17 * u
+        const L = R + Math.max(R * 1.6, 9 * u)
         line(x, y, x + L * Math.cos(yaw), y - L * Math.sin(yaw))
-        g.lineWidth = 1.4 * u
+        g.lineWidth = Math.min(1.4 * u, R * 0.4)
         g.strokeStyle = col
         g.stroke()
         if (blind) {
           const left = 1 - (t - blind.t) / Math.max(1, blind.until - blind.t)
-          circle(x, y, 11 * u)
+          circle(x, y, R + 5 * u)
           g.globalAlpha = 0.35 * left
           g.fillStyle = '#fff'
           g.fill()
@@ -690,17 +695,17 @@ export class RadarclipPlayer {
           g.stroke()
           g.globalAlpha = 1
         }
-        circle(x, y, (mine ? 7 : 5.5) * u)
+        circle(x, y, R)
         g.fillStyle = col
         g.fill()
-        g.lineWidth = 1.2 * u
-        g.strokeStyle = '#000'
+        g.lineWidth = mine ? edge * 1.5 : edge
+        g.strokeStyle = mine ? '#fff' : '#000'
         g.stroke()
       })
       let dz = ''
       if (!mine && me && Math.abs(st.z - me.z) >= 100) dz = ` ${st.z > me.z ? '▲' : '▼'}${Math.abs(Math.round((st.z - me.z) * 0.0254))} m`
       const extra = focus.includes(p.index) ? ` · ${st.weapon}${st.place ? ` · ${st.place}` : ''}` : ''
-      text(x + 8 * u, y - 6 * u, `${p.name} ${st.hp}${extra}${dz}`, col, mine)
+      text(x + R + 3 * u, y - R * 0.5 - 3 * u, `${p.name} ${st.hp}${extra}${dz}`, col, mine)
     }
     for (const b of bodies) b()
     for (const l of labels) l()
