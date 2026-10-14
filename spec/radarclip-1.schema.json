@@ -118,7 +118,13 @@
         "until": {"type": "integer"},
         "weapon": {"type": "string"},
         "hs": {"type": "boolean"},
-        "dmg": {"type": "integer"}
+        "dmg": {"type": "integer"},
+        "assister": {"$ref": "#/$defs/player"},
+        "flashassist": {"type": "boolean"},
+        "pen": {"type": "integer", "minimum": 0},
+        "noscope": {"type": "boolean"},
+        "smoke": {"type": "boolean"},
+        "blind": {"type": "boolean"}
       },
       "allOf": [
         {"if": {"properties": {"type": {"const": "kill"}}}, "then": {"$ref": "#/$defs/pos", "required": ["victim", "weapon", "hs"]}},

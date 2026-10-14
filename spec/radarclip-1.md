@@ -97,13 +97,18 @@ world damage, a player not in the clip).
 
 | `type` | Fields |
 |---|---|
-| `kill` | `attacker`, `victim`, `weapon`, `hs` (headshot), `x`, `y`, `z` (victim) |
+| `kill` | `attacker`, `victim`, `weapon`, `hs` (headshot), `x`, `y`, `z` (victim); optional `assister`, `flashassist`, `pen`, `noscope`, `smoke`, `blind` (see below) |
 | `hurt` | `attacker`, `victim`, `dmg`, `weapon` |
 | `blind` | `victim`, `by`, `until` |
 | `smoke`, `molotov` | `by`, `until`, `x`, `y`, `z` |
 | `flash`, `he` | `by`, `x`, `y`, `z` |
 | `plant` | `by`, `x`, `y`, `z` |
 | `defuse`, `explode` | `by` |
+
+Optional kill fields, left out when they don't apply: `assister` (the player credited with the
+assist), `flashassist` (true: the assist was a flash), `pen` (surfaces the bullet went through;
+above 0 is a wallbang), `noscope`, `smoke` (shot through a smoke) and `blind` (the attacker was
+blind). Readers treat a missing field as no assist, 0, or false.
 
 Kills from earlier in the round are included so the map can show them. Smokes and fires still
 burning and a bomb planted before the clip starts are included too.

@@ -439,6 +439,12 @@ impl Match {
                         t, attacker: who(e, "attacker"), victim, x, y, z,
                         weapon: fstr(e, "weapon").unwrap_or_default().to_string(),
                         hs: fnum(e, "headshot") == Some(1.0),
+                        assister: who(e, "assister"),
+                        flashassist: fnum(e, "assistedflash") == Some(1.0),
+                        pen: fint(e, "penetrated").max(0) as u32,
+                        noscope: fnum(e, "noscope") == Some(1.0),
+                        smoke: fnum(e, "thrusmoke") == Some(1.0),
+                        blind: fnum(e, "attackerblind") == Some(1.0),
                     });
                 }
                 "player_hurt" if inside(e) => {
