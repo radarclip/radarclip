@@ -52,6 +52,8 @@ const WEAPON: Record<string, string> = {
   bizon: 'PP-Bizon', nova: 'Nova', xm1014: 'XM1014', mag7: 'MAG-7', sawedoff: 'Sawed-Off', negev: 'Negev',
   m249: 'M249', scar20: 'SCAR-20', g3sg1: 'G3SG1', revolver: 'R8', taser: 'Zeus',
 }
+/** Names on the map stay short; the full name shows on hover. */
+const short = (name: string) => ([...name].length > 10 ? [...name].slice(0, 9).join('') + '…' : name)
 const weaponName = (w: string) => WEAPON[w] ?? (/^knife|bayonet/.test(w) ? 'Knife' : w)
 const clock = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.floor(Math.max(0, s) % 60)).padStart(2, '0')}`
 
@@ -101,6 +103,9 @@ export class RadarclipPlayer {
   private view: [number, number, number] = [0, 0, 1024]
   /** Mapping of the last render, to turn pointer positions back into radar px. */
   private screen = { s: 1, ox: 0, oy: 0, dpr: 1 }
+  /** Players drawn in the last frame (radar px), for hover. */
+  private drawn: { index: number; x: number; y: number; r: number }[] = []
+  private hovered: number | null = null
   private lastMap = ''
   private _zoom: Zoom = 'fit'
   private _floor: Floor = 'upper'
@@ -303,6 +308,27 @@ export class RadarclipPlayer {
     return [Math.min(Math.max(x, 0), 1024 - size), Math.min(Math.max(y, 0), 1024 - size), size]
   }
 
+  /** Highlight the player under the pointer (full label), or none. */
+  private hover(cssX: number | null, cssY = 0) {
+    let hit: number | null = null
+    if (cssX != null && this.replay) {
+      const [x, y] = this.toRadar(cssX, cssY)
+      const slack = (8 * this.screen.dpr) / this.screen.s
+      let best = Infinity
+      for (const d of this.drawn) {
+        const dist = Math.hypot(d.x - x, d.y - y)
+        if (dist <= d.r + slack && dist < best) {
+          best = dist
+          hit = d.index
+        }
+      }
+    }
+    if (hit === this.hovered) return
+    this.hovered = hit
+    this.canvas.style.cursor = hit != null ? 'pointer' : 'grab'
+    this.render()
+  }
+
   private toRadar(cssX: number, cssY: number): [number, number] {
     const { s, ox, oy, dpr } = this.screen
     return [(cssX * dpr - ox) / s + this.view[0], (cssY * dpr - oy) / s + this.view[1]]
@@ -336,7 +362,10 @@ export class RadarclipPlayer {
     })
     c.addEventListener('pointermove', (e) => {
       const p = down.get(e.pointerId)
-      if (!p) return
+      if (!p) {
+        if (e.pointerType === 'mouse') this.hover(...local(e.clientX, e.clientY))
+        return
+      }
       if (down.size === 1) {
         this.panBy(e.clientX - p.x, e.clientY - p.y)
         p.x = e.clientX
@@ -354,6 +383,7 @@ export class RadarclipPlayer {
       down.delete(e.pointerId)
       if (!down.size) c.style.cursor = 'grab'
     }
+    c.addEventListener('pointerleave', () => this.hover(null))
     c.addEventListener('pointerup', up)
     c.addEventListener('pointercancel', up)
     c.addEventListener('dblclick', () => {
@@ -585,19 +615,11 @@ export class RadarclipPlayer {
       g.strokeRect(x - 4.5 * u, y - 4.5 * u, 9 * u, 9 * u)
     }
 
-    const labels: (() => void)[] = []
-    const text = (x: number, y: number, str: string, fill: string, bold = false, alpha = 1) =>
-      labels.push(() => {
-        g.font = `${bold ? 700 : 500} ${9 * u}px system-ui, -apple-system, "Segoe UI", sans-serif`
-        g.globalAlpha = alpha
-        g.lineWidth = 2.4 * u
-        g.strokeStyle = '#000'
-        g.lineJoin = 'round'
-        g.strokeText(str, x, y)
-        g.fillStyle = fill
-        g.fillText(str, x, y)
-        g.globalAlpha = 1
-      })
+    // Labels are placed after everything else: highest priority first, each tries four spots
+    // around its anchor and is dropped when all of them overlap a label already placed.
+    const labels: { x: number; y: number; gap: number; str: string; fill: string; bold: boolean; alpha: number; prio: number }[] = []
+    const text = (x: number, y: number, gap: number, str: string, fill: string, { bold = false, alpha = 1, prio = 0 } = {}) =>
+      labels.push({ x, y, gap, str, fill, bold, alpha, prio })
 
     // Deaths so far, and attacker → victim lines right after a kill.
     const dead = new Set<number>()
@@ -615,7 +637,7 @@ export class RadarclipPlayer {
       g.strokeStyle = col
       g.stroke()
       g.globalAlpha = 1
-      text(x + 6 * u, y + 11 * u, r.players[k.victim]?.name ?? '', col, false, 0.7)
+      text(x, y, d, short(r.players[k.victim]?.name ?? ''), col, { alpha: 0.7, prio: -1 })
       if (t <= k.t + KILL_LINE * sec && k.attacker != null) {
         const a = stateAt(r, k.attacker, k.t)
         if (a) {
@@ -639,6 +661,7 @@ export class RadarclipPlayer {
     const focus = r.clip.focus
     const me = focus.length ? stateAt(r, focus[0], t) : null
     const bodies: (() => void)[] = []
+    const drawn: typeof this.drawn = []
     for (const p of r.players) {
       const st = stateAt(r, p.index, t)
       if (!st || dead.has(p.index)) continue
@@ -704,11 +727,45 @@ export class RadarclipPlayer {
       })
       let dz = ''
       if (!mine && me && Math.abs(st.z - me.z) >= 100) dz = ` ${st.z > me.z ? '▲' : '▼'}${Math.abs(Math.round((st.z - me.z) * 0.0254))} m`
-      const extra = focus.includes(p.index) ? ` · ${st.weapon}${st.place ? ` · ${st.place}` : ''}` : ''
-      text(x + R + 3 * u, y - R * 0.5 - 3 * u, `${p.name} ${st.hp}${extra}${dz}`, col, mine)
+      const hovered = p.index === this.hovered
+      let str: string
+      if (hovered) str = `${p.name} · ${st.hp} HP${st.armor > 0 ? ` · ${st.armor} armor` : ''}${st.weapon ? ` · ${st.weapon}` : ''}${st.place ? ` · ${st.place}` : ''}${dz}`
+      else if (focus.includes(p.index)) str = `${short(p.name)} ${st.hp}${st.weapon ? ` · ${st.weapon}` : ''}${st.place ? ` · ${st.place}` : ''}${dz}`
+      else str = `${short(p.name)}${st.hp < 100 ? ` ${st.hp}` : ''}${dz}`
+      text(x, y, R, str, col, { bold: mine || hovered, prio: hovered ? 3 : mine ? 2 : focus.includes(p.index) ? 1 : 0 })
+      drawn.push({ index: p.index, x, y, r: R })
     }
+    this.drawn = drawn
     for (const b of bodies) b()
-    for (const l of labels) l()
+
+    const placed: [number, number, number, number][] = []
+    const lh = 11 * u
+    for (const l of labels.sort((a, b) => b.prio - a.prio)) {
+      g.font = `${l.bold ? 700 : 500} ${9 * u}px system-ui, -apple-system, "Segoe UI", sans-serif`
+      const w = g.measureText(l.str).width
+      const off = l.gap + 3 * u
+      const spots: [number, number][] = [
+        [l.x + off, l.y - off * 0.5 - lh * 0.3], [l.x + off, l.y + off * 0.5 + lh * 0.7],
+        [l.x - off - w, l.y - off * 0.5 - lh * 0.3], [l.x - off - w, l.y + off * 0.5 + lh * 0.7],
+      ]
+      const boxOf = (lx: number, ly: number): [number, number, number, number] => [lx, ly - lh * 0.8, lx + w, ly + lh * 0.2]
+      const visible = (b: [number, number, number, number]) => b[0] >= vx && b[1] >= vy && b[2] <= vx + vs && b[3] <= vy + vs
+      const free = (b: [number, number, number, number]) => placed.every(([a, c, e, f]) => b[2] <= a || b[0] >= e || b[3] <= c || b[1] >= f)
+      let spot = spots.find((sp) => visible(boxOf(...sp)) && free(boxOf(...sp)))
+      // The focus player's and the hovered label always show, inside the view if possible.
+      if (!spot && l.prio >= 2) spot = spots.find((sp) => visible(boxOf(...sp))) ?? spots[0]
+      if (!spot) continue
+      const box = boxOf(...spot)
+      placed.push(box)
+      g.globalAlpha = l.alpha
+      g.lineWidth = 2.4 * u
+      g.strokeStyle = '#000'
+      g.lineJoin = 'round'
+      g.strokeText(l.str, spot[0], spot[1])
+      g.fillStyle = l.fill
+      g.fillText(l.str, spot[0], spot[1])
+      g.globalAlpha = 1
+    }
 
     g.setTransform(1, 0, 0, 1, 0, 0)
     if (this.opts.hud !== false) this.drawHud(t, bomb, dpr)
