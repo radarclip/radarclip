@@ -6,3 +6,5 @@ dist/
 *.dem.zst
 .DS_Store
 crates/radarclip-wasm/pkg/
+packages/*/dist/
+packages/player/www/radars/

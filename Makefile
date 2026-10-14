@@ -1,7 +1,7 @@
 # Build, test and check everything. Rust via rustup (~/.cargo/bin), schema check via uv.
 CARGO ?= $(shell command -v cargo || echo $(HOME)/.cargo/bin/cargo)
 
-.PHONY: build test spec-check check wasm-check wasm serve
+.PHONY: build test spec-check check wasm-check wasm serve js js-test player-serve
 
 build:
 	$(CARGO) build --release
@@ -27,4 +27,17 @@ wasm:
 serve: wasm
 	python3 -m http.server 8765 -d crates/radarclip-wasm
 
-check: test spec-check wasm-check
+# TypeScript packages (pnpm workspace).
+js:
+	pnpm install --frozen-lockfile
+	pnpm build
+
+js-test: js
+	pnpm test
+	pnpm typecheck
+
+# Player test page: http://localhost:8766/packages/player/www/ (radars: node packages/player/scripts/local-radars.mjs <dir>)
+player-serve: js
+	python3 -m http.server 8766 -b 127.0.0.1
+
+check: test spec-check wasm-check js-test
