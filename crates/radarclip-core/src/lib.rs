@@ -1,0 +1,404 @@
+//! The radarclip/1 format: types, track encoding (quantisation, Δ-coding, keyframes) and
+//! decoding. See `spec/radarclip-1.md`.
+
+use serde::{Deserialize, Serialize};
+
+pub const FORMAT: &str = "radarclip/1";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Clip {
+    pub format: String,
+    pub map: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub title: String,
+    pub round: u32,
+    pub winner: Option<String>,
+    pub tickrate: u32,
+    pub start: i64,
+    pub step: u32,
+    pub frames: u32,
+    pub quant: Quant,
+    pub focus: Vec<u32>,
+    pub marks: Vec<Mark>,
+    pub places: Vec<String>,
+    pub weapons: Vec<String>,
+    pub players: Vec<Player>,
+    pub events: Vec<Event>,
+    pub nades: Vec<Nade>,
+    pub shots: Shots,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct Quant {
+    pub xy: u32,
+    pub z: u32,
+    pub yaw: u32,
+}
+
+impl Default for Quant {
+    fn default() -> Self {
+        Quant { xy: 4, z: 8, yaw: 2 }
+    }
+}
+
+/// How far interpolation between keyframes may miss a dropped frame.
+#[derive(Debug, Clone, Copy)]
+pub struct Tolerance {
+    pub xy: f32,
+    pub yaw: f32,
+}
+
+impl Default for Tolerance {
+    fn default() -> Self {
+        Tolerance { xy: 8.0, yaw: 6.0 }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Mark {
+    pub t: i64,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Player {
+    pub name: String,
+    pub side: String,
+    pub track: Track,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Track {
+    pub alive: Vec<u32>,
+    pub k: Vec<i64>,
+    pub x: Vec<i64>,
+    pub y: Vec<i64>,
+    pub z: Vec<i64>,
+    pub yaw: Vec<i64>,
+    pub hp: Vec<i64>,
+    pub armor: Vec<i64>,
+    pub weapon: Vec<i64>,
+    pub place: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum Event {
+    Kill {
+        t: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attacker: Option<u32>,
+        victim: u32,
+        weapon: String,
+        hs: bool,
+        x: i64,
+        y: i64,
+        z: i64,
+    },
+    Hurt {
+        t: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attacker: Option<u32>,
+        victim: u32,
+        dmg: i64,
+        weapon: String,
+    },
+    Blind {
+        t: i64,
+        victim: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<u32>,
+        until: i64,
+    },
+    Smoke { t: i64, #[serde(default, skip_serializing_if = "Option::is_none")] by: Option<u32>, until: i64, x: i64, y: i64, z: i64 },
+    Molotov { t: i64, #[serde(default, skip_serializing_if = "Option::is_none")] by: Option<u32>, until: i64, x: i64, y: i64, z: i64 },
+    Flash { t: i64, #[serde(default, skip_serializing_if = "Option::is_none")] by: Option<u32>, x: i64, y: i64, z: i64 },
+    He { t: i64, #[serde(default, skip_serializing_if = "Option::is_none")] by: Option<u32>, x: i64, y: i64, z: i64 },
+    Plant { t: i64, #[serde(default, skip_serializing_if = "Option::is_none")] by: Option<u32>, x: i64, y: i64, z: i64 },
+    Defuse { t: i64, #[serde(default, skip_serializing_if = "Option::is_none")] by: Option<u32> },
+    Explode { t: i64, #[serde(default, skip_serializing_if = "Option::is_none")] by: Option<u32> },
+}
+
+impl Event {
+    pub fn t(&self) -> i64 {
+        match self {
+            Event::Kill { t, .. } | Event::Hurt { t, .. } | Event::Blind { t, .. } | Event::Smoke { t, .. }
+            | Event::Molotov { t, .. } | Event::Flash { t, .. } | Event::He { t, .. } | Event::Plant { t, .. }
+            | Event::Defuse { t, .. } | Event::Explode { t, .. } => *t,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Nade {
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<u32>,
+    pub path: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Shots {
+    pub t: Vec<i64>,
+    pub p: Vec<u32>,
+    pub yaw: Vec<i64>,
+}
+
+/// One player at one frame, as read from the demo.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Sample {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub yaw: f32,
+    pub hp: i64,
+    pub armor: i64,
+    /// Index into `Clip::weapons`, -1 for none.
+    pub weapon: i64,
+    /// Index into `Clip::places`, -1 for none.
+    pub place: i64,
+}
+
+/// Running Δ-coder: `push(v)` appends `v - previous`.
+#[derive(Default)]
+struct Delta {
+    prev: i64,
+}
+
+impl Delta {
+    fn push(&mut self, out: &mut Vec<i64>, v: i64) {
+        out.push(v - self.prev);
+        self.prev = v;
+    }
+}
+
+/// Wrap an angle in degrees into [-180, 180).
+pub fn wrap_deg(a: f32) -> f32 {
+    (a + 180.0).rem_euclid(360.0) - 180.0
+}
+
+/// Encode one player's frames (`None` = dead or absent) into a track.
+pub fn encode_track(frames: &[Option<Sample>], quant: Quant, tol: Tolerance) -> Track {
+    let mut tr = Track::default();
+    let mut keep = vec![false; frames.len()];
+
+    // Alive spans: keyframes at both ends, the rest only where interpolation misses.
+    let mut f = 0;
+    while f < frames.len() {
+        if frames[f].is_none() {
+            f += 1;
+            continue;
+        }
+        let a = f;
+        while f < frames.len() && frames[f].is_some() {
+            f += 1;
+        }
+        let b = f - 1;
+        tr.alive.push(a as u32);
+        if f < frames.len() {
+            tr.alive.push(f as u32);
+        }
+        keep[a] = true;
+        keep[b] = true;
+        refine(frames, &mut keep, a, b, tol);
+    }
+
+    let (mut k, mut x, mut y, mut z, mut yaw) = (Delta::default(), Delta::default(), Delta::default(), Delta::default(), Delta::default());
+    let yaw_steps = (360 / quant.yaw) as i64;
+    for (i, s) in frames.iter().enumerate() {
+        let Some(s) = s else { continue };
+        if !keep[i] {
+            continue;
+        }
+        k.push(&mut tr.k, i as i64);
+        x.push(&mut tr.x, (s.x / quant.xy as f32).round() as i64);
+        y.push(&mut tr.y, (s.y / quant.xy as f32).round() as i64);
+        z.push(&mut tr.z, (s.z / quant.z as f32).round() as i64);
+        // Yaw steps wrap: store the shortest turn so 179° → -179° is +1 step, not -179.
+        let q = (wrap_deg(s.yaw) / quant.yaw as f32).round() as i64;
+        let d = (q - yaw.prev + yaw_steps / 2).rem_euclid(yaw_steps) - yaw_steps / 2;
+        tr.yaw.push(d);
+        yaw.prev += d;
+    }
+
+    let mut last = [None::<i64>; 4];
+    for (i, s) in frames.iter().enumerate() {
+        let Some(s) = s else { continue };
+        for (slot, (list, v)) in [(&mut tr.hp, s.hp), (&mut tr.armor, s.armor), (&mut tr.weapon, s.weapon), (&mut tr.place, s.place)]
+            .into_iter()
+            .enumerate()
+        {
+            if last[slot] != Some(v) {
+                list.push(i as i64);
+                list.push(v);
+                last[slot] = Some(v);
+            }
+        }
+    }
+    tr
+}
+
+/// Douglas–Peucker over one alive span: keep the frame interpolation misses most, recurse.
+fn refine(frames: &[Option<Sample>], keep: &mut [bool], a: usize, b: usize, tol: Tolerance) {
+    if b <= a + 1 {
+        return;
+    }
+    let (sa, sb) = (frames[a].unwrap(), frames[b].unwrap());
+    let mut worst = (1.0f32, None);
+    for i in a + 1..b {
+        let s = frames[i].unwrap();
+        let p = lerp(&sa, &sb, (i - a) as f32 / (b - a) as f32);
+        let pos = (p.x - s.x).abs().max((p.y - s.y).abs()).max((p.z - s.z).abs()) / tol.xy;
+        let ang = wrap_deg(p.yaw - s.yaw).abs() / tol.yaw;
+        let score = pos.max(ang);
+        if score > worst.0 {
+            worst = (score, Some(i));
+        }
+    }
+    if let (_, Some(i)) = worst {
+        keep[i] = true;
+        refine(frames, keep, a, i, tol);
+        refine(frames, keep, i, b, tol);
+    }
+}
+
+/// Position and yaw between two samples; yaw turns the short way round.
+pub fn lerp(a: &Sample, b: &Sample, t: f32) -> Sample {
+    Sample {
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+        z: a.z + (b.z - a.z) * t,
+        yaw: wrap_deg(a.yaw + wrap_deg(b.yaw - a.yaw) * t),
+        ..*a
+    }
+}
+
+/// Decode a track back into one sample per frame (the reference decoder).
+pub fn decode_track(tr: &Track, frames: u32, quant: Quant) -> Vec<Option<Sample>> {
+    let n = frames as usize;
+    let mut alive = vec![false; n];
+    let mut state = false;
+    let mut toggles = tr.alive.iter().map(|&f| f as usize).peekable();
+    for (f, a) in alive.iter_mut().enumerate() {
+        while toggles.peek() == Some(&f) {
+            state = !state;
+            toggles.next();
+        }
+        *a = state;
+    }
+
+    let mut keys: Vec<(usize, Sample)> = Vec::with_capacity(tr.k.len());
+    let (mut f, mut x, mut y, mut z, mut yaw) = (0i64, 0i64, 0i64, 0i64, 0i64);
+    for i in 0..tr.k.len() {
+        f += tr.k[i];
+        x += tr.x[i];
+        y += tr.y[i];
+        z += tr.z[i];
+        yaw += tr.yaw[i];
+        keys.push((f as usize, Sample {
+            x: (x * quant.xy as i64) as f32,
+            y: (y * quant.xy as i64) as f32,
+            z: (z * quant.z as i64) as f32,
+            yaw: wrap_deg((yaw * quant.yaw as i64) as f32),
+            hp: 0, armor: 0, weapon: -1, place: -1,
+        }));
+    }
+
+    let mut out = vec![None; n];
+    for w in keys.windows(2) {
+        let ((fa, a), (fb, b)) = (w[0], w[1]);
+        if !(fa..=fb).all(|i| i < n && alive[i]) {
+            continue;
+        }
+        for i in fa..=fb {
+            out[i] = Some(lerp(&a, &b, if fb == fa { 0.0 } else { (i - fa) as f32 / (fb - fa) as f32 }));
+        }
+    }
+    for &(fk, s) in &keys {
+        if fk < n && alive[fk] && out[fk].is_none() {
+            out[fk] = Some(s);
+        }
+    }
+
+    let apply = |list: &[i64], set: &mut dyn FnMut(&mut Sample, i64), out: &mut Vec<Option<Sample>>| {
+        let mut v = -1;
+        let mut changes = list.chunks(2).peekable();
+        for (i, s) in out.iter_mut().enumerate() {
+            while let Some(c) = changes.peek() {
+                if c[0] as usize > i {
+                    break;
+                }
+                v = c[1];
+                changes.next();
+            }
+            if let Some(s) = s {
+                set(s, v);
+            }
+        }
+    };
+    apply(&tr.hp, &mut |s, v| s.hp = v, &mut out);
+    apply(&tr.armor, &mut |s, v| s.armor = v, &mut out);
+    apply(&tr.weapon, &mut |s, v| s.weapon = v, &mut out);
+    apply(&tr.place, &mut |s, v| s.place = v, &mut out);
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample(x: f32, y: f32, yaw: f32, hp: i64) -> Option<Sample> {
+        Some(Sample { x, y, z: 0.0, yaw, hp, armor: 100, weapon: 0, place: 1 })
+    }
+
+    #[test]
+    fn straight_run_needs_two_keyframes() {
+        let frames: Vec<_> = (0..50).map(|i| sample(i as f32 * 30.0, 100.0, 90.0, 100)).collect();
+        let tr = encode_track(&frames, Quant::default(), Tolerance::default());
+        assert_eq!(tr.k.len(), 2);
+        assert_eq!(tr.alive, vec![0]);
+    }
+
+    #[test]
+    fn roundtrip_stays_within_tolerance() {
+        let mut frames: Vec<_> = (0..200)
+            .map(|i| {
+                let t = i as f32 / 10.0;
+                sample(t.sin() * 900.0 + t * 40.0, t.cos() * 600.0, wrap_deg(t * 70.0), 100 - (i / 20) as i64)
+            })
+            .collect();
+        for f in &mut frames[120..140] {
+            *f = None; // dead, then alive again
+        }
+        let (q, tol) = (Quant::default(), Tolerance::default());
+        let tr = encode_track(&frames, q, tol);
+        let back = decode_track(&tr, frames.len() as u32, q);
+        for (a, b) in frames.iter().zip(&back) {
+            match (a, b) {
+                (None, None) => {}
+                (Some(a), Some(b)) => {
+                    assert!((a.x - b.x).abs() <= tol.xy + q.xy as f32, "x {} vs {}", a.x, b.x);
+                    assert!((a.y - b.y).abs() <= tol.xy + q.xy as f32);
+                    assert!(wrap_deg(a.yaw - b.yaw).abs() <= tol.yaw + q.yaw as f32, "yaw {} vs {}", a.yaw, b.yaw);
+                    assert_eq!((a.hp, a.armor, a.weapon, a.place), (b.hp, b.armor, b.weapon, b.place));
+                }
+                _ => panic!("alive mismatch"),
+            }
+        }
+        assert!(tr.k.len() < frames.len() / 2, "{} keyframes", tr.k.len());
+    }
+
+    #[test]
+    fn yaw_wraps_the_short_way() {
+        let frames = vec![sample(0.0, 0.0, 178.0, 100), sample(0.0, 0.0, -178.0, 100)];
+        let tr = encode_track(&frames, Quant::default(), Tolerance::default());
+        assert_eq!(tr.yaw, vec![89, 2]);
+    }
+
+    #[test]
+    fn events_serialise_with_type_tag() {
+        let e = Event::Defuse { t: 10, by: None };
+        assert_eq!(serde_json::to_string(&e).unwrap(), r#"{"type":"defuse","t":10}"#);
+    }
+}

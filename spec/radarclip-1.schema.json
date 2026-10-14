@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://radarclip.dev/spec/radarclip-1.schema.json",
+  "title": "radarclip/1",
+  "description": "Compact top-down replay clip of a CS2 round. See radarclip-1.md.",
+  "type": "object",
+  "required": ["format", "map", "round", "winner", "tickrate", "start", "step", "frames", "quant", "focus", "marks", "places", "weapons", "players", "events", "nades", "shots"],
+  "properties": {
+    "format": {"const": "radarclip/1"},
+    "map": {"type": "string", "minLength": 1},
+    "title": {"type": "string"},
+    "round": {"type": "integer", "minimum": 1},
+    "winner": {"enum": ["CT", "T", null]},
+    "tickrate": {"type": "integer", "minimum": 1},
+    "start": {"type": "integer"},
+    "step": {"type": "integer", "minimum": 1},
+    "frames": {"type": "integer", "minimum": 1},
+    "quant": {
+      "type": "object",
+      "required": ["xy", "z", "yaw"],
+      "properties": {
+        "xy": {"type": "integer", "minimum": 1},
+        "z": {"type": "integer", "minimum": 1},
+        "yaw": {"type": "integer", "minimum": 1, "maximum": 180}
+      }
+    },
+    "focus": {"type": "array", "items": {"$ref": "#/$defs/player"}},
+    "marks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["t", "label"],
+        "properties": {"t": {"type": "integer"}, "label": {"type": "string"}}
+      }
+    },
+    "places": {"type": "array", "items": {"type": "string"}},
+    "weapons": {"type": "array", "items": {"type": "string"}},
+    "players": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "side", "track"],
+        "properties": {
+          "name": {"type": "string"},
+          "side": {"$ref": "#/$defs/side"},
+          "track": {"$ref": "#/$defs/track"}
+        }
+      }
+    },
+    "events": {"type": "array", "items": {"$ref": "#/$defs/event"}},
+    "nades": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "path"],
+        "properties": {
+          "type": {"enum": ["smoke", "flash", "he", "molotov", "decoy"]},
+          "by": {"$ref": "#/$defs/player"},
+          "path": {"$ref": "#/$defs/ints", "description": "Δ-coded [t, x, y, z] quadruples"}
+        }
+      }
+    },
+    "shots": {
+      "type": "object",
+      "required": ["t", "p", "yaw"],
+      "properties": {
+        "t": {"$ref": "#/$defs/ints"},
+        "p": {"type": "array", "items": {"$ref": "#/$defs/player"}},
+        "yaw": {"$ref": "#/$defs/ints"}
+      }
+    },
+    "radar": {
+      "type": "object",
+      "required": ["pos_x", "pos_y", "scale"],
+      "properties": {
+        "pos_x": {"type": "number"},
+        "pos_y": {"type": "number"},
+        "scale": {"type": "number"},
+        "split_z": {"type": ["number", "null"]},
+        "image": {"type": "string"},
+        "lower": {"type": ["string", "null"]}
+      }
+    }
+  },
+  "$defs": {
+    "side": {"enum": ["CT", "T"]},
+    "player": {"type": "integer", "minimum": 0},
+    "ints": {"type": "array", "items": {"type": "integer"}},
+    "track": {
+      "type": "object",
+      "required": ["alive", "k", "x", "y", "z", "yaw", "hp", "armor", "weapon", "place"],
+      "properties": {
+        "alive": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+        "k": {"$ref": "#/$defs/ints"},
+        "x": {"$ref": "#/$defs/ints"},
+        "y": {"$ref": "#/$defs/ints"},
+        "z": {"$ref": "#/$defs/ints"},
+        "yaw": {"$ref": "#/$defs/ints"},
+        "hp": {"$ref": "#/$defs/ints"},
+        "armor": {"$ref": "#/$defs/ints"},
+        "weapon": {"$ref": "#/$defs/ints"},
+        "place": {"$ref": "#/$defs/ints"}
+      }
+    },
+    "pos": {
+      "required": ["x", "y", "z"],
+      "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}, "z": {"type": "integer"}}
+    },
+    "event": {
+      "type": "object",
+      "required": ["type", "t"],
+      "properties": {
+        "type": {"type": "string"},
+        "t": {"type": "integer"},
+        "attacker": {"$ref": "#/$defs/player"},
+        "victim": {"$ref": "#/$defs/player"},
+        "by": {"$ref": "#/$defs/player"},
+        "until": {"type": "integer"},
+        "weapon": {"type": "string"},
+        "hs": {"type": "boolean"},
+        "dmg": {"type": "integer"}
+      },
+      "allOf": [
+        {"if": {"properties": {"type": {"const": "kill"}}}, "then": {"$ref": "#/$defs/pos", "required": ["victim", "weapon", "hs"]}},
+        {"if": {"properties": {"type": {"const": "hurt"}}}, "then": {"required": ["victim", "dmg", "weapon"]}},
+        {"if": {"properties": {"type": {"const": "blind"}}}, "then": {"required": ["victim", "until"]}},
+        {"if": {"properties": {"type": {"enum": ["smoke", "molotov"]}}}, "then": {"$ref": "#/$defs/pos", "required": ["until"]}},
+        {"if": {"properties": {"type": {"enum": ["flash", "he", "plant"]}}}, "then": {"$ref": "#/$defs/pos"}}
+      ]
+    }
+  }
+}

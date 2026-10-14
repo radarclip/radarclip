@@ -1,0 +1,18 @@
+[package]
+name = "radarclip-cli"
+description = "radarclip command line: list rounds, cut clips from CS2 demos"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "radarclip"
+path = "src/main.rs"
+
+[dependencies]
+radarclip-core.workspace = true
+radarclip-parser.workspace = true
+serde_json.workspace = true
+clap = { version = "4", features = ["derive"] }
+flate2 = "1"
