@@ -19,10 +19,15 @@ export interface PlayerOptions {
   theme?: Partial<Theme>
   /** Draw clock, kill feed and mark labels onto the canvas (default true). */
   hud?: boolean
+  /** Drag to pan, wheel/pinch to zoom, double-click to reset (default true). */
+  interactive?: boolean
+  /** Zoom with the mouse wheel (default true). Turn off on pages that scroll past many players. */
+  wheelZoom?: boolean
 }
 
 export type PlayerEventName = 'time' | 'play' | 'pause' | 'ended' | 'load' | 'view'
-export type Zoom = 'fit' | 'map'
+/** 'fit': around the focus players; 'map': the whole radar; 'free': zoomed or panned by the user. */
+export type Zoom = 'fit' | 'map' | 'free'
 export type Floor = 'upper' | 'lower'
 
 const ROUND_TIME = 115
@@ -34,6 +39,7 @@ const TRACER_LIFE = 0.3 // seconds a shot stays visible
 const TRAIL = 2.5 // seconds of movement drawn behind a player
 const KILL_LINE = 1.5
 const FEED = 5
+const MIN_VIEW_WORLD = 400 // closest zoom: ~10 m across
 const GRENADE_HITS = new Set(['hegrenade', 'inferno', 'molotov', 'world', 'incgrenade'])
 
 const WEAPON: Record<string, string> = {
@@ -89,6 +95,11 @@ export class RadarclipPlayer {
   private shots: ShotView[] = []
   private kills: Extract<Event, { type: 'kill' }>[] = []
   private fitBox: [number, number, number] = [0, 0, 1024]
+  /** Visible square of the radar: x, y, size in radar px (0…1024). */
+  private view: [number, number, number] = [0, 0, 1024]
+  /** Mapping of the last render, to turn pointer positions back into radar px. */
+  private screen = { s: 1, ox: 0, oy: 0, dpr: 1 }
+  private lastMap = ''
   private _zoom: Zoom = 'fit'
   private _floor: Floor = 'upper'
   private _playing = false
@@ -103,6 +114,7 @@ export class RadarclipPlayer {
       this.resizeObserver = new ResizeObserver(() => this.replay && this.render())
       this.resizeObserver.observe(canvas)
     }
+    if (opts.interactive !== false) this.attachPointer()
   }
 
   setTheme(theme: Partial<Theme>) {
@@ -137,7 +149,10 @@ export class RadarclipPlayer {
     const window = 0.07 * r.tickrate
     this.shots = r.shots.map((s) => ({ ...s, hit: hits.find((h) => h.attacker === s.p && Math.abs(h.t - s.t) <= window)?.victim }))
     this.kills = r.events.filter((e): e is Extract<Event, { type: 'kill' }> => e.type === 'kill')
-    this.fitBox = this.computeFit()
+    this.fitBox = this.clampView(this.computeFit())
+    // Keep a hand-picked view when switching rounds on the same map.
+    if (!(this._zoom === 'free' && this.lastMap === clip.map)) this.applyZoom()
+    this.lastMap = clip.map
     const first = clip.marks.find((m) => m.t >= r.start && m.t <= r.end)
     this.tick = first ? first.t : r.start
     const me = clip.focus.length ? stateAt(r, clip.focus[0], this.tick) : null
@@ -238,14 +253,110 @@ export class RadarclipPlayer {
     this.emit('view')
   }
 
-  /** 'fit': the area around the focus players; 'map': the whole radar. */
   get zoom() {
     return this._zoom
   }
   set zoom(z: Zoom) {
     this._zoom = z
+    this.applyZoom()
     this.render()
     this.emit('view')
+  }
+
+  private applyZoom() {
+    if (this._zoom === 'map') this.view = [0, 0, 1024]
+    else if (this._zoom === 'fit') this.view = this.fitBox
+  }
+
+  /** Zoom by `factor` (< 1 zooms in) around a point given in CSS px on the canvas. */
+  zoomAt(factor: number, cssX: number, cssY: number) {
+    const [px, py] = this.toRadar(cssX, cssY)
+    const [x, y, size] = this.view
+    const next = this.clampSize(size * factor)
+    const k = next / size
+    this.setView([px - (px - x) * k, py - (py - y) * k, next])
+  }
+
+  /** Move the view by CSS px (drag direction). */
+  panBy(dx: number, dy: number) {
+    const { s, dpr } = this.screen
+    const [x, y, size] = this.view
+    this.setView([x - (dx * dpr) / s, y - (dy * dpr) / s, size])
+  }
+
+  private setView(v: [number, number, number]) {
+    this.view = this.clampView(v)
+    this._zoom = 'free'
+    this.render()
+    this.emit('view')
+  }
+
+  private clampSize(size: number) {
+    return Math.min(1024, Math.max(Math.max(48, MIN_VIEW_WORLD / (this.radar?.scale ?? 5)), size))
+  }
+
+  /** Keep the view inside the radar. */
+  private clampView([x, y, size]: [number, number, number]): [number, number, number] {
+    size = this.clampSize(size)
+    return [Math.min(Math.max(x, 0), 1024 - size), Math.min(Math.max(y, 0), 1024 - size), size]
+  }
+
+  private toRadar(cssX: number, cssY: number): [number, number] {
+    const { s, ox, oy, dpr } = this.screen
+    return [(cssX * dpr - ox) / s + this.view[0], (cssY * dpr - oy) / s + this.view[1]]
+  }
+
+  private attachPointer() {
+    const c = this.canvas
+    c.style.touchAction = 'none'
+    c.style.cursor = 'grab'
+    const down = new Map<number, { x: number; y: number }>()
+    const local = (x: number, y: number) => {
+      const r = c.getBoundingClientRect()
+      return [x - r.left, y - r.top] as const
+    }
+    const spread = () => {
+      const [a, b] = [...down.values()]
+      return { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 }
+    }
+    c.addEventListener('wheel', (e) => {
+      if (!this.replay || this.opts.wheelZoom === false) return
+      e.preventDefault()
+      const d = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY
+      // Trackpad pinch arrives as wheel + ctrlKey with small deltas.
+      this.zoomAt(Math.exp(d * (e.ctrlKey ? 0.01 : 0.002)), ...local(e.clientX, e.clientY))
+    }, { passive: false })
+    c.addEventListener('pointerdown', (e) => {
+      if (!this.replay || (e.pointerType === 'mouse' && e.button !== 0)) return
+      c.setPointerCapture(e.pointerId)
+      down.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      c.style.cursor = 'grabbing'
+    })
+    c.addEventListener('pointermove', (e) => {
+      const p = down.get(e.pointerId)
+      if (!p) return
+      if (down.size === 1) {
+        this.panBy(e.clientX - p.x, e.clientY - p.y)
+        p.x = e.clientX
+        p.y = e.clientY
+        return
+      }
+      const before = spread()
+      p.x = e.clientX
+      p.y = e.clientY
+      const after = spread()
+      this.panBy(after.mx - before.mx, after.my - before.my)
+      if (after.d > 0) this.zoomAt(before.d / after.d, ...local(after.mx, after.my))
+    })
+    const up = (e: PointerEvent) => {
+      down.delete(e.pointerId)
+      if (!down.size) c.style.cursor = 'grab'
+    }
+    c.addEventListener('pointerup', up)
+    c.addEventListener('pointercancel', up)
+    c.addEventListener('dblclick', () => {
+      if (this.replay) this.zoom = 'fit'
+    })
   }
 
   get split(): number | null {
@@ -353,10 +464,11 @@ export class RadarclipPlayer {
     g.fillRect(0, 0, W, H)
 
     // View: a square box of radar px, fitted into the canvas.
-    const [vx, vy, vs] = this._zoom === 'fit' ? this.fitBox : [0, 0, 1024]
+    const [vx, vy, vs] = this.view
     const side = Math.min(W, H)
     const s = side / vs
     const ox = (W - side) / 2, oy = (H - side) / 2
+    this.screen = { s, ox, oy, dpr }
     g.setTransform(s, 0, 0, s, ox - vx * s, oy - vy * s)
     const u = (dpr * Math.max(1, cssW / 640)) / s // one CSS px (a bit more on big canvases), in radar px
 
