@@ -1,4 +1,4 @@
 export { RadarclipPlayer, DEFAULT_THEME } from './player.js'
-export type { Floor, PlayerEventName, PlayerOptions, RadarSource, Theme, Zoom } from './player.js'
+export type { ChangeListener, Floor, PlayerEventName, PlayerOptions, PlayerState, RadarSource, StateKey, Theme, Zoom } from './player.js'
 export { RadarclipPlayerElement } from './element.js'
 export * from '@radarclip/format'

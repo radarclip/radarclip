@@ -26,6 +26,27 @@ export interface PlayerOptions {
 }
 
 export type PlayerEventName = 'time' | 'play' | 'pause' | 'ended' | 'load' | 'view'
+
+/** Everything a UI around the player needs, as one snapshot. Times in seconds after freeze end. */
+export interface PlayerState {
+  clip: Clip | null
+  time: number
+  start: number
+  end: number
+  playing: boolean
+  speed: number
+  zoom: Zoom
+  floor: Floor
+  /** The map has a lower floor to switch to. */
+  floors: boolean
+}
+export type StateKey = 'clip' | 'time' | 'playing' | 'speed' | 'zoom' | 'floor'
+export type ChangeListener = (state: PlayerState, changed: ReadonlySet<StateKey>) => void
+
+const ALL_KEYS: StateKey[] = ['clip', 'time', 'playing', 'speed', 'zoom', 'floor']
+const KEYS_OF: Record<PlayerEventName, StateKey[]> = {
+  load: ALL_KEYS, time: ['time'], play: ['playing'], pause: ['playing'], ended: ['playing', 'time'], view: [],
+}
 /** 'fit': around the focus players; 'map': the whole radar; 'free': zoomed or panned by the user. */
 export type Zoom = 'fit' | 'map' | 'free'
 export type Floor = 'upper' | 'lower'
@@ -95,6 +116,7 @@ export class RadarclipPlayer {
   private tick = 0
   private raf = 0
   private listeners = new Map<PlayerEventName, Set<(t: number) => void>>()
+  private changeListeners = new Set<ChangeListener>()
   private resizeObserver?: ResizeObserver
   private shots: ShotView[] = []
   private kills: Extract<Event, { type: 'kill' }>[] = []
@@ -257,7 +279,7 @@ export class RadarclipPlayer {
   }
   set speed(v: number) {
     this._speed = v
-    this.emit('view')
+    this.emit('view', ['speed'])
   }
 
   get zoom() {
@@ -267,7 +289,7 @@ export class RadarclipPlayer {
     this._zoom = z
     this.applyZoom()
     this.render()
-    this.emit('view')
+    this.emit('view', ['zoom'])
   }
 
   private applyZoom() {
@@ -295,7 +317,7 @@ export class RadarclipPlayer {
     this.view = this.clampView(v)
     this._zoom = 'free'
     this.render()
-    this.emit('view')
+    this.emit('view', ['zoom'])
   }
 
   private clampSize(size: number) {
@@ -400,7 +422,7 @@ export class RadarclipPlayer {
   set floor(f: Floor) {
     this._floor = f
     this.render()
-    this.emit('view')
+    this.emit('view', ['floor'])
   }
 
   on(name: PlayerEventName, fn: (seconds: number) => void): () => void {
@@ -409,8 +431,36 @@ export class RadarclipPlayer {
     return () => this.listeners.get(name)?.delete(fn)
   }
 
-  private emit(name: PlayerEventName) {
+  /**
+   * One listener for every change: called with the current state and the keys that changed
+   * (a new clip reports all of them). Prefer this over the single events.
+   */
+  onChange(fn: ChangeListener): () => void {
+    this.changeListeners.add(fn)
+    return () => this.changeListeners.delete(fn)
+  }
+
+  get state(): PlayerState {
+    const r = this.replay
+    return {
+      clip: r?.clip ?? null,
+      time: r ? this.time : 0,
+      start: r ? this.start : 0,
+      end: r ? this.end : 0,
+      playing: this._playing,
+      speed: this._speed,
+      zoom: this._zoom,
+      floor: this._floor,
+      floors: this.split != null,
+    }
+  }
+
+  private emit(name: PlayerEventName, keys: StateKey[] = KEYS_OF[name]) {
     for (const fn of this.listeners.get(name) ?? []) fn(this.time)
+    if (!this.changeListeners.size || !keys.length) return
+    const state = this.state
+    const changed = new Set(keys)
+    for (const fn of this.changeListeners) fn(state, changed)
   }
 
   /** The current frame as an image, e.g. for a preview card. */

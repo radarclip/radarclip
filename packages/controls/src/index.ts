@@ -1,4 +1,4 @@
-import type { RadarclipPlayer, RadarclipPlayerElement } from '@radarclip/player'
+import type { PlayerState, RadarclipPlayerElement, StateKey } from '@radarclip/player'
 
 const SPEEDS = [0.25, 0.5, 1, 2]
 const ICON = {
@@ -101,11 +101,17 @@ export class RadarclipControlsElement extends HTMLElement {
       el.addEventListener(name, fn)
       this.cleanup.push(() => el.removeEventListener(name, fn))
     }
-    on('radarclip:load', () => this.loaded())
-    for (const n of ['time', 'play', 'pause', 'ended', 'view']) on(`radarclip:${n}`, () => this.sync())
+    on('radarclip:change', (e) => {
+      const { state, changed } = (e as CustomEvent<{ state: PlayerState; changed: StateKey[] }>).detail
+      if (changed.includes('clip')) this.loaded(state)
+      this.sync(state)
+    })
     on('keydown', (e) => this.key(e as KeyboardEvent))
     if (!el.hasAttribute('tabindex')) el.tabIndex = 0
-    if (el.player.replay) this.loaded()
+    if (el.player.replay) {
+      this.loaded(el.player.state)
+      this.sync(el.player.state)
+    }
   }
 
   private detach() {
@@ -124,28 +130,27 @@ export class RadarclipControlsElement extends HTMLElement {
     e.preventDefault()
   }
 
-  private loaded() {
-    const p = this._target!.player
+  /** A new clip: timeline bounds, marks, floor button. */
+  private loaded(p: PlayerState) {
+    const c = p.clip
+    if (!c) return
     const range = this.el.range as HTMLInputElement
     range.min = String(p.start)
     range.max = String(p.end)
     const span = p.end - p.start || 1
-    const c = p.replay.clip
     for (const m of this.el.track.querySelectorAll('.mark')) m.remove()
     this.el.track.insertAdjacentHTML('beforeend', c.marks
       .map((m) => ({ s: m.t / c.tickrate, label: m.label }))
       .filter(({ s }) => s >= p.start && s <= p.end)
       .map(({ s, label }) => `<span class="mark" style="left:${((s - p.start) / span) * 100}%" title="${esc(label)}"></span>`)
       .join(''))
-    this.el.floor.hidden = p.split == null
-    this.sync()
+    this.el.floor.hidden = !p.floors
   }
 
   /** Runs every frame while playing: only touch the DOM where something changed. Replacing a
    *  button's content under the cursor between mousedown and mouseup swallows the click. */
-  private sync() {
-    const p: RadarclipPlayer | undefined = this._target?.player
-    if (!p?.replay) return
+  private sync(p: PlayerState) {
+    if (!p.clip) return
     ;(this.el.range as HTMLInputElement).value = String(p.time)
     this.text(this.el.time, `${p.time.toFixed(1)} s`)
     if (this.el.play.dataset.state !== String(p.playing)) {

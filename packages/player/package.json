@@ -5,14 +5,19 @@
   "license": "MIT",
   "type": "module",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./dist/radarclip-player.js" },
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/radarclip-player.js"
+    },
     "./iife": "./dist/radarclip-player.iife.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json --emitDeclarationOnly && esbuild src/index.ts --bundle --format=esm --target=es2022 --outfile=dist/radarclip-player.js && esbuild src/index.ts --bundle --format=iife --global-name=Radarclip --target=es2022 --minify --outfile=dist/radarclip-player.iife.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "true"
+    "test": "vitest run"
   },
   "dependencies": {
     "@radarclip/format": "workspace:*"
