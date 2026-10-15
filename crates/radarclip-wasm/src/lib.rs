@@ -1,7 +1,7 @@
 //! JS bindings: load a demo (in one piece or streamed in chunks), list its rounds and players,
 //! cut clips. Clips and info cross the boundary as JSON strings.
 
-use radarclip_core::{Quant, Tolerance};
+use radarclip_core::{cut, Clip, Cut, Mark, Quant, Tolerance};
 use radarclip_parser::{ClipRequest, Match, Progress};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -122,6 +122,13 @@ impl Demo {
         serde_json::to_string(&info).unwrap()
     }
 
+    /// The whole match as `radarclip-match/1` JSON: every round as a full-round clip, to store
+    /// and cut moments from later without the demo (see `cutClip`).
+    #[wasm_bindgen(js_name = matchFile)]
+    pub fn match_file(&self) -> Result<String, JsError> {
+        serde_json::to_string(&self.m.export().map_err(err)?).map_err(err)
+    }
+
     /// Cut a clip. `request` is JSON: `{round, from?, to?, step?, focus?, marks?: [[s, label]],
     /// title?, anonymize?}`. Returns the radarclip/1 JSON.
     pub fn clip(&self, request: &str) -> Result<String, JsError> {
@@ -132,4 +139,41 @@ impl Demo {
         };
         serde_json::to_string(&self.m.clip(&req).map_err(err)?).map_err(err)
     }
+}
+
+/// `cutClip()` request; times in seconds after the round's freeze end, focus as player indices.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CutRequest {
+    #[serde(default)]
+    from: f32,
+    #[serde(default = "full_round")]
+    to: f32,
+    #[serde(default)]
+    focus: Vec<u32>,
+    #[serde(default)]
+    marks: Vec<(f32, String)>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    anonymize: bool,
+}
+
+/// Cut a moment out of a stored clip (e.g. a round of a `radarclip-match/1`) without the demo.
+/// `request` is JSON: `{from?, to?, focus?: [player index], marks?: [[s, label]], title?,
+/// anonymize?}`. Returns the radarclip/1 JSON.
+#[wasm_bindgen(js_name = cutClip)]
+pub fn cut_clip(clip: &str, request: &str) -> Result<String, JsError> {
+    let clip: Clip = serde_json::from_str(clip).map_err(err)?;
+    let r: CutRequest = serde_json::from_str(request).map_err(err)?;
+    let tick = |s: f32| (s * clip.tickrate as f32).round() as i64;
+    let c = Cut {
+        from: tick(r.from),
+        to: tick(r.to.min(1e5)),
+        focus: r.focus,
+        marks: r.marks.into_iter().map(|(t, label)| Mark { t: tick(t), label }).collect(),
+        title: r.title,
+        anonymize: r.anonymize,
+    };
+    serde_json::to_string(&cut(&clip, &c).map_err(err)?).map_err(err)
 }

@@ -44,11 +44,13 @@ files (Valve's artwork, not part of this repo); pass `icon: (name) => url` to ho
 make build
 target/release/radarclip info match.dem
 target/release/radarclip clip match.dem -r 7 --from 45 --to 65 --mark "59.7=kill at Shop" -o r7.radarclip
+target/release/radarclip match match.dem -o match.radarclip-match   # every round: ~250 KB for a 300 MB demo
 ```
 
 Times are seconds after the round's freeze end (round time 1:55 = 0). `.radarclip` is raw
 deflate, `.radarclip.json` readable JSON. `--anonymize` replaces player names. Demos may be
-plain, `.dem.bz2` or `.dem.zst`.
+plain, `.dem.bz2` or `.dem.zst`. A whole match is [`radarclip-match/1`](spec/radarclip-match-1.md): every round as a
+clip, to reopen and cut moments from without the demo.
 
 ## Browser
 

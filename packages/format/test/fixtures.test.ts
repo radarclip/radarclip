@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { decode, readClip, stateAt, writeClip } from '../src/index.js'
+import { decode, readClip, readMatch, stateAt, writeClip, writeMatch } from '../src/index.js'
 
 const dir = join(import.meta.dirname, '../../../spec/fixtures')
 const fixtures = readdirSync(dir).filter((f) => f.endsWith('.radarclip.json'))
@@ -59,4 +59,31 @@ describe.each(fixtures)('%s', (file) => {
 
 it('rejects other major versions', async () => {
   await expect(readClip('{"format":"radarclip/2"}')).rejects.toThrow(/newer reader/)
+})
+
+describe('radarclip-match/1', () => {
+  const text = readFileSync(join(dir, 'nuke-r1-2.radarclip-match.json'), 'utf8')
+
+  it('reads the reference match and every round as a clip', async () => {
+    const m = await readMatch(text)
+    expect(m.rounds.map((r) => r.number)).toEqual([1, 2])
+    for (const r of m.rounds) {
+      expect(r.keys.length).toBe(r.clip.players.length)
+      expect(decode(r.clip).players.length).toBe(r.clip.players.length)
+    }
+  })
+
+  it('survives deflate round trip', async () => {
+    const m = await readMatch(text)
+    const bytes = await writeMatch(m)
+    expect(bytes.length).toBeLessThan(text.length / 3)
+    expect(await readMatch(bytes)).toEqual(m)
+  })
+
+  it('names the round whose clip is broken, and asks for a newer reader for newer formats', async () => {
+    const broken = JSON.parse(text)
+    broken.rounds[1].clip.players[0].track.k.pop()
+    await expect(readMatch(JSON.stringify(broken))).rejects.toThrow(/round 2/)
+    await expect(readMatch(JSON.stringify({ ...JSON.parse(text), format: 'radarclip-match/2' }))).rejects.toThrow(/newer reader/)
+  })
 })

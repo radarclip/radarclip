@@ -52,3 +52,20 @@ fn kill_details_are_optional() {
     assert_eq!((*assister, *flashassist, *pen, *noscope, *smoke, *blind), (Some(4), true, 2, true, true, true));
     assert_eq!(serde_json::from_str::<Event>(&serde_json::to_string(&e).unwrap()).unwrap(), e);
 }
+
+/// The reference match file loads, survives a round trip, and names every clip player.
+#[test]
+fn match_fixture_loads_and_roundtrips() {
+    use radarclip_core::{MatchFile, MATCH_FORMAT};
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../spec/fixtures/nuke-r1-2.radarclip-match.json");
+    let m: MatchFile = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(m.format, MATCH_FORMAT);
+    assert_eq!(m.rounds.len(), 2);
+    for r in &m.rounds {
+        assert_eq!(r.clip.format, FORMAT);
+        assert_eq!(r.keys.len(), r.clip.players.len());
+        assert!(r.keys.iter().all(|k| m.players.iter().any(|p| &p.key == k)), "round {}: unknown key", r.number);
+    }
+    let again: MatchFile = serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
+    assert_eq!(m, again);
+}

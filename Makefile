@@ -11,6 +11,7 @@ test:
 
 spec-check:
 	uvx -q check-jsonschema --schemafile spec/radarclip-1.schema.json spec/fixtures/*.radarclip.json
+	uvx -q check-jsonschema --schemafile spec/radarclip-match-1.schema.json spec/fixtures/*.radarclip-match.json
 
 # The parser must keep compiling for the browser.
 wasm-check:
