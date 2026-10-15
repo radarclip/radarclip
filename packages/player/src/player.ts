@@ -63,6 +63,8 @@ const FIRE_R = 120
 const TRACER = 520 // world units drawn for a shot that hit nobody (~13 m)
 const TRACER_LIFE = 0.3 // seconds a shot stays visible
 const TRAIL = 2.5 // seconds of movement drawn behind a player
+const CONE = 32 // degrees either side of where a player looks
+const CONE_LEN = 7.2 // cone length in player radii (the focus player's: 9.2)
 const KILL_LINE = 1.5
 const FEED = 5
 const MIN_VIEW_WORLD = 400 // closest zoom: ~10 m across
@@ -81,6 +83,15 @@ const WEAPON: Record<string, string> = {
 /** Names on the map stay short; the full name shows on hover. */
 const short = (name: string) => ([...name].length > 10 ? [...name].slice(0, 9).join('') + '…' : name)
 const weaponName = (w: string) => WEAPON[w] ?? (/^knife|bayonet/.test(w) ? 'Knife' : w)
+/** `#rrggbb` → `rgba()` with alpha, for gradients. */
+const withAlpha = (color: string, a: number) => {
+  let hex = color.trim()
+  if (/^#[0-9a-f]{3}$/i.test(hex)) hex = '#' + [...hex.slice(1)].map((c) => c + c).join('')
+  if (!/^#[0-9a-f]{6}/i.test(hex)) return color // a theme colour we can't parse: no fade
+  const n = parseInt(hex.slice(1, 7), 16)
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`
+}
+const DANGER = '#ff6b5e'
 const clock = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.floor(Math.max(0, s) % 60)).padStart(2, '0')}`
 
 /** Radars registered by map name (e.g. by a page that hosts them). */
@@ -679,7 +690,9 @@ export class RadarclipPlayer {
       labels.push({ x, y, gap, str, fill, bold, alpha, prio })
 
     // Deaths so far, and attacker → victim lines right after a kill.
+    // Drawn after the cones so a cone never hides a death.
     const dead = new Set<number>()
+    const deaths: (() => void)[] = []
     for (const k of this.kills) {
       if (k.t > t) break
       dead.add(k.victim)
@@ -687,28 +700,30 @@ export class RadarclipPlayer {
       const [x, y] = this.px(k.x, k.y)
       const col = this.color(k.victim)
       const d = 4.5 * u
-      g.beginPath()
-      g.moveTo(x - d, y - d); g.lineTo(x + d, y + d); g.moveTo(x - d, y + d); g.lineTo(x + d, y - d)
-      g.globalAlpha = 0.85
-      g.lineWidth = 2.2 * u
-      g.strokeStyle = col
-      g.stroke()
-      g.globalAlpha = 1
-      text(x, y, d, short(r.players[k.victim]?.name ?? ''), col, { alpha: 0.7, prio: -1 })
-      if (t <= k.t + KILL_LINE * sec && k.attacker != null) {
-        const a = stateAt(r, k.attacker, k.t)
-        if (a) {
-          const [ax, ay] = this.px(a.x, a.y)
-          line(ax, ay, x, y)
-          g.setLineDash([5 * u, 3 * u])
-          g.globalAlpha = 1 - (t - k.t) / (KILL_LINE * sec)
-          g.lineWidth = 1.5 * u
-          g.strokeStyle = '#ff2b2b'
-          g.stroke()
-          g.setLineDash([])
-          g.globalAlpha = 1
+      text(x, y, d, short(r.players[k.victim]?.name ?? ''), th.fg, { alpha: 0.5, prio: -1 })
+      deaths.push(() => {
+        g.beginPath()
+        g.moveTo(x - d, y - d); g.lineTo(x + d, y + d); g.moveTo(x - d, y + d); g.lineTo(x + d, y - d)
+        g.globalAlpha = 0.6
+        g.lineWidth = 2 * u
+        g.strokeStyle = col
+        g.stroke()
+        g.globalAlpha = 1
+        if (t <= k.t + KILL_LINE * sec && k.attacker != null) {
+          const a = stateAt(r, k.attacker, k.t)
+          if (a) {
+            const [ax, ay] = this.px(a.x, a.y)
+            line(ax, ay, x, y)
+            g.setLineDash([5 * u, 3 * u])
+            g.globalAlpha = 1 - (t - k.t) / (KILL_LINE * sec)
+            g.lineWidth = 1.5 * u
+            g.strokeStyle = '#ff2b2b'
+            g.stroke()
+            g.setLineDash([])
+            g.globalAlpha = 1
+          }
         }
-      }
+      })
     }
 
     // Players: trail, view direction, blind ring, body, label. Bodies are drawn at the real
@@ -718,10 +733,12 @@ export class RadarclipPlayer {
     const focus = r.clip.focus
     const me = focus.length ? stateAt(r, focus[0], t) : null
     const bodies: (() => void)[] = []
+    const cones: (() => void)[] = []
     const drawn: typeof this.drawn = []
     for (const p of r.players) {
       const st = stateAt(r, p.index, t)
-      if (!st || dead.has(p.index)) continue
+      // A canvas gradient throws on a non-finite position; never let one player blank the frame.
+      if (!st || dead.has(p.index) || !Number.isFinite(st.x) || !Number.isFinite(st.y)) continue
       const col = this.color(p.index)
       const mine = p.index === focus[0]
       const [x, y] = this.px(st.x, st.y)
@@ -736,33 +753,42 @@ export class RadarclipPlayer {
         })
         continue
       }
-      g.beginPath()
-      let started = false
-      for (let q = Math.max(r.start, t - TRAIL * sec); q < t; q += r.step) {
+      // Trail: the last TRAIL seconds, fading towards the past; stronger for the focus player.
+      let prev: [number, number] | null = null
+      const t0 = Math.max(r.start, t - TRAIL * sec)
+      for (let q = t0; q <= t; q = q < t && q + r.step > t ? t : q + r.step) {
         const a = stateAt(r, p.index, q)
-        if (!a || !this.onFloor(a.z)) continue
-        const [qx, qy] = this.px(a.x, a.y)
-        started ? g.lineTo(qx, qy) : g.moveTo(qx, qy)
-        started = true
+        if (!a || !this.onFloor(a.z)) { prev = null; continue }
+        const pt = this.px(a.x, a.y)
+        if (prev) {
+          line(prev[0], prev[1], pt[0], pt[1])
+          g.globalAlpha = (mine ? 0.12 : 0.06) + (mine ? 0.5 : 0.3) * ((q - t0) / Math.max(1, t - t0))
+          g.lineWidth = (mine ? 1.6 : 1.3) * u
+          g.strokeStyle = col
+          g.stroke()
+        }
+        prev = pt
+        if (q === t) break
       }
-      if (started) {
-        g.lineTo(x, y)
-        g.globalAlpha = 0.45
-        g.lineWidth = 1.3 * u
-        g.strokeStyle = col
-        g.stroke()
-        g.globalAlpha = 1
-      }
+      g.globalAlpha = 1
       const blind = r.events.find((e) => e.type === 'blind' && e.victim === p.index && t >= e.t && t <= e.until) as
         | Extract<Event, { type: 'blind' }>
         | undefined
       const yaw = (st.yaw * Math.PI) / 180
+      // A vision cone in the player's colour, fading out with distance; drawn under all bodies.
+      cones.push(() => {
+        const L = R * (mine ? CONE_LEN + 2 : CONE_LEN)
+        const grad = g.createRadialGradient(x, y, 0, x, y, L)
+        grad.addColorStop(0.1, withAlpha(col, mine ? 0.62 : 0.5))
+        grad.addColorStop(1, withAlpha(col, 0))
+        g.beginPath()
+        g.moveTo(x, y)
+        g.arc(x, y, L, -yaw - (CONE * Math.PI) / 180, -yaw + (CONE * Math.PI) / 180)
+        g.closePath()
+        g.fillStyle = grad
+        g.fill()
+      })
       bodies.push(() => {
-        const L = R + Math.max(R * 1.6, 9 * u)
-        line(x, y, x + L * Math.cos(yaw), y - L * Math.sin(yaw))
-        g.lineWidth = Math.min(1.4 * u, R * 0.4)
-        g.strokeStyle = col
-        g.stroke()
         if (blind) {
           const left = 1 - (t - blind.t) / Math.max(1, blind.until - blind.t)
           circle(x, y, R + 5 * u)
@@ -775,35 +801,52 @@ export class RadarclipPlayer {
           g.stroke()
           g.globalAlpha = 1
         }
+        // HP below 100: a ring that runs clockwise from the top.
+        if (st.hp < 100) {
+          const rr = R + 3 * u
+          circle(x, y, rr)
+          g.lineWidth = 2.2 * u
+          g.strokeStyle = 'rgba(14,16,20,.7)'
+          g.stroke()
+          g.beginPath()
+          g.arc(x, y, rr, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * Math.max(0, st.hp)) / 100)
+          g.lineWidth = 1.6 * u
+          g.strokeStyle = st.hp < 30 ? DANGER : th.fg
+          g.stroke()
+        }
         circle(x, y, R)
         g.fillStyle = col
         g.fill()
         g.lineWidth = mine ? edge * 1.5 : edge
-        g.strokeStyle = mine ? '#fff' : '#000'
+        g.strokeStyle = mine ? '#fff' : th.bg
         g.stroke()
       })
       let dz = ''
       if (!mine && me && Math.abs(st.z - me.z) >= 100) dz = ` ${st.z > me.z ? '▲' : '▼'}${Math.abs(Math.round((st.z - me.z) * 0.0254))} m`
       const hovered = p.index === this.hovered
+      // Names only (HP is the ring); the focus player's in full, hover shows everything.
       let str: string
       if (hovered) str = `${p.name} · ${st.hp} HP${st.armor > 0 ? ` · ${st.armor} armor` : ''}${st.weapon ? ` · ${st.weapon}` : ''}${st.place ? ` · ${st.place}` : ''}${dz}`
-      else if (focus.includes(p.index)) str = `${short(p.name)} ${st.hp}${st.weapon ? ` · ${st.weapon}` : ''}${st.place ? ` · ${st.place}` : ''}${dz}`
-      else str = `${short(p.name)}${st.hp < 100 ? ` ${st.hp}` : ''}${dz}`
-      text(x, y, R, str, col, { bold: mine || hovered, prio: hovered ? 3 : mine ? 2 : focus.includes(p.index) ? 1 : 0 })
+      else str = `${mine ? p.name : short(p.name)}${dz}`
+      text(x, y, R + (st.hp < 100 ? 3 * u : 0), str, mine ? th.me : th.fg, { bold: mine || hovered, alpha: mine || hovered ? 1 : 0.92, prio: hovered ? 3 : mine ? 2 : focus.includes(p.index) ? 1 : 0 })
       drawn.push({ index: p.index, x, y, r: R })
     }
     this.drawn = drawn
+    for (const c of cones) c()
+    for (const d of deaths) d()
     for (const b of bodies) b()
 
-    const placed: [number, number, number, number][] = []
+    // Labels go below the dot first (the space above belongs to damage numbers), then right,
+    // left, and above as a last resort; they never cover a player.
+    const placed: [number, number, number, number][] = drawn.map((d) => [d.x - d.r, d.y - d.r, d.x + d.r, d.y + d.r])
     const lh = 11 * u
     for (const l of labels.sort((a, b) => b.prio - a.prio)) {
       g.font = `${l.bold ? 600 : 500} ${9 * u}px ${SANS}`
       const w = g.measureText(l.str).width
-      const off = l.gap + 3 * u
+      const off = l.gap + 2.5 * u
       const spots: [number, number][] = [
-        [l.x + off, l.y - off * 0.5 - lh * 0.3], [l.x + off, l.y + off * 0.5 + lh * 0.7],
-        [l.x - off - w, l.y - off * 0.5 - lh * 0.3], [l.x - off - w, l.y + off * 0.5 + lh * 0.7],
+        [l.x - w / 2, l.y + off + lh * 0.75], [l.x + off + u, l.y + lh * 0.3],
+        [l.x - off - u - w, l.y + lh * 0.3], [l.x - w / 2, l.y - off - lh * 0.25],
       ]
       const boxOf = (lx: number, ly: number): [number, number, number, number] => [lx, ly - lh * 0.8, lx + w, ly + lh * 0.2]
       const visible = (b: [number, number, number, number]) => b[0] >= vx && b[1] >= vy && b[2] <= vx + vs && b[3] <= vy + vs
@@ -816,7 +859,7 @@ export class RadarclipPlayer {
       placed.push(box)
       g.globalAlpha = l.alpha
       g.lineWidth = 2.4 * u
-      g.strokeStyle = '#000'
+      g.strokeStyle = this.theme.bg
       g.lineJoin = 'round'
       g.strokeText(l.str, spot[0], spot[1])
       g.fillStyle = l.fill
