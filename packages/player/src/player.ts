@@ -180,6 +180,7 @@ export class RadarclipPlayer {
   private kills: Extract<Event, { type: 'kill' }>[] = []
   private damage: DamageGroup[] = []
   private icons = new Map<string, HTMLImageElement | null>()
+  private iconTries = new Map<string, number>()
   private fitBox: [number, number, number] = [0, 0, 1024]
   /** Visible square of the radar: x, y, size in radar px (0…1024). */
   private view: [number, number, number] = [0, 0, 1024]
@@ -307,7 +308,12 @@ export class RadarclipPlayer {
         this.icons.set(weapon, img)
         if (this.replay) this.render()
       })
-      .catch(() => {}) // stays a name
+      // A cold CDN can fail the first request: try again a little later, up to three times.
+      .catch(() => {
+        const n = (this.iconTries.get(weapon) ?? 0) + 1
+        this.iconTries.set(weapon, n)
+        if (n < 3) setTimeout(() => this.icons.delete(weapon), 4000 * n)
+      })
     return null
   }
 
