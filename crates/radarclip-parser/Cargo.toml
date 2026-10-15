@@ -10,6 +10,7 @@ repository.workspace = true
 radarclip-core.workspace = true
 parser.workspace = true
 ahash.workspace = true
+serde.workspace = true
 # Pure-Rust decoders, so .dem.bz2 / .dem.zst also work in the browser.
 bzip2 = "0.6"  # default backend: libbz2-rs-sys (pure Rust)
 ruzstd = "0.9"

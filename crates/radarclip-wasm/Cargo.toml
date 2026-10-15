@@ -15,6 +15,7 @@ radarclip-parser.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 wasm-bindgen = "=0.2.129"
+js-sys = "0.3"
 
 # The parser's dependencies pull in three getrandom versions; on wasm32 each needs its JS backend.
 [target.'cfg(target_arch = "wasm32")'.dependencies]

@@ -2,7 +2,7 @@
 //! cut clips. Clips and info cross the boundary as JSON strings.
 
 use radarclip_core::{Quant, Tolerance};
-use radarclip_parser::{ClipRequest, Match};
+use radarclip_parser::{ClipRequest, Match, Progress};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
@@ -29,9 +29,18 @@ impl DemoLoader {
         self.bytes.extend_from_slice(chunk);
     }
 
-    /// Parse what was pushed. Plain demos, .dem.bz2 and .dem.zst.
-    pub fn finish(self) -> Result<Demo, JsError> {
-        Demo::new(self.bytes)
+    /// Parse what was pushed. Plain demos, .dem.bz2 and .dem.zst. `onProgress(stage, done,
+    /// total)` is called every few MB: `stage` is `unpack`, `events`, `players` or `grenades`,
+    /// `done` that stage's share (0…1), `total` an estimate for the whole parse (0…1).
+    pub fn finish(self, #[wasm_bindgen(js_name = onProgress)] on_progress: Option<js_sys::Function>) -> Result<Demo, JsError> {
+        let report: std::rc::Rc<dyn Fn(Progress)> = match on_progress {
+            Some(f) => std::rc::Rc::new(move |p: Progress| {
+                let stage = serde_json::to_value(p.stage).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default();
+                let _ = f.call3(&JsValue::NULL, &JsValue::from_str(&stage), &JsValue::from_f64(p.done as f64), &JsValue::from_f64(p.total as f64));
+            }),
+            None => std::rc::Rc::new(|_| {}),
+        };
+        Ok(Demo { m: Match::parse_with_progress(&self.bytes, report).map_err(err)? })
     }
 }
 
