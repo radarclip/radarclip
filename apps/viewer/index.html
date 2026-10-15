@@ -4,15 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>radarclip viewer</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%230b0d10'/><path d='M23 14H14v36h9M41 14h9v36h-9' fill='none' stroke='%23e8ebef' stroke-width='6' stroke-linecap='square'/><path d='M28 36L44.56 32.18A17 17 0 0 0 31.82 19.44Z' fill='%239d8cff' fill-opacity='.42'/><circle cx='28' cy='36' r='6.5' fill='%239d8cff'/></svg>">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@500;600&family=Saira+Semi+Condensed:wght@700&display=swap">
 <meta name="description" content="Watch CS2 demos as a 2D replay in your browser. The demo is parsed locally and never uploaded.">
 <style>
-  :root { --bg: #0b0c0f; --panel: #14161b; --fg: #e8eaed; --muted: #9aa0a6; --line: #262a32; --accent: #6ea0ff;
-    --radarclip-panel: var(--panel); --radarclip-border: var(--line); color-scheme: dark; }
+  :root { --bg: #0b0d10; --panel: #14171c; --raised: #1b1f26; --fg: #e8ebef; --muted: #9aa3ae; --line: #2a2f38; --line-strong: #5b6470;
+    --accent: #9d8cff; --ct: #5aa9e6; --t: #e8a33d;
+    --radarclip-panel: var(--panel); --radarclip-line: var(--line); --radarclip-border: var(--line-strong); color-scheme: dark; }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
-  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { display: flex; align-items: baseline; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-  header h1 { font-size: 16px; margin: 0; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 Geist, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { margin: 0; line-height: 0; }
+  header h1 svg { height: 26px; width: auto; }
   header .meta { color: var(--muted); }
   header a { color: var(--muted); margin-left: auto; }
   main { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 16px; padding: 16px; max-width: 1200px; margin: 0 auto; }
@@ -26,26 +31,27 @@
   progress { width: 100%; accent-color: var(--accent); }
   aside { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
   aside label { color: var(--muted); font-size: 12px; display: block; margin-bottom: 4px; }
-  select { width: 100%; font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+  select { width: 100%; font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 6px; padding: 6px 8px; }
   ol { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 8px; max-height: 62vh; overflow: auto; }
   li button { all: unset; box-sizing: border-box; display: flex; gap: 8px; width: 100%; padding: 7px 10px; cursor: pointer;
     border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
   li:last-child button { border-bottom: 0; }
-  li button:hover, li button:focus-visible { background: var(--panel); }
-  li button[aria-current="true"] { background: var(--panel); box-shadow: inset 3px 0 0 var(--accent); }
+  li button:hover { background: var(--panel); }
+  li button:focus-visible { background: var(--panel); outline: 2px solid var(--accent); outline-offset: -2px; }
+  li button[aria-current="true"] { background: var(--raised); font-weight: 600; }
   li .w { margin-left: auto; font-weight: 600; }
-  li .w.CT { color: #5aa9e6; } li .w.T { color: #e8a33d; }
+  li .w.CT { color: var(--ct); } li .w.T { color: var(--t); }
   li .len { color: var(--muted); }
   .viewer { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; max-width: min(100%, 80vh); }
   radarclip-player:focus { outline: none; }
   .hint { color: var(--muted); font-size: 12px; }
-  kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+  kbd { font: 500 11px "Geist Mono", ui-monospace, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
   @media (max-width: 760px) { main { grid-template-columns: 1fr; } ol { max-height: 30vh; } }
 </style>
 </head>
 <body>
 <header>
-  <h1>radarclip viewer</h1>
+  <h1><svg viewBox="8 8 262 58" role="img" aria-label="radarclip"><path d="M23 14H14v36h9M41 14h9v36h-9" fill="none" stroke="#e8ebef" stroke-width="6" stroke-linecap="square"/><path d="M28 36L44.56 32.18A17 17 0 0 0 31.82 19.44Z" fill="#9d8cff" fill-opacity=".42"/><circle cx="28" cy="36" r="6.5" fill="#9d8cff"/><text x="62" y="53" font-family="'Saira Semi Condensed', 'Arial Narrow', sans-serif" font-weight="700" font-size="56.5" letter-spacing="-0.56" fill="#e8ebef">radarclip</text></svg></h1>
   <span class="meta" id="meta">2D replays of CS2 demos, parsed in your browser</span>
   <a href="https://github.com/radarclip/radarclip">GitHub</a>
 </header>
