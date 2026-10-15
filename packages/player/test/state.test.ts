@@ -85,3 +85,13 @@ it('stops calling a listener after unsubscribing', async () => {
   p.seek(4)
   expect(fn).toHaveBeenCalledTimes(1)
 })
+
+it('never steps before the start when a frame is older than play()', async () => {
+  const { p } = await setup()
+  p.seek(p.start)
+  p.play()
+  // A frame timestamp from just before play() ran (browsers hand these out).
+  frames.shift()!(performance.now() - 40)
+  expect(p.time).toBeGreaterThanOrEqual(p.start)
+  expect(p.time).toBeCloseTo(p.start)
+})

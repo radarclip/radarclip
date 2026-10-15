@@ -382,7 +382,9 @@ export class RadarclipPlayer {
     let last = performance.now()
     const step = (now: number) => {
       if (!this._playing) return
-      this.tick += ((now - last) / 1000) * this._speed * this.replay.tickrate
+      // A frame's timestamp can be a little older than the moment play() ran: never step back,
+      // or the first frame lands before the clip's start and draws an empty map.
+      this.tick = Math.max(this.replay.start, this.tick + (Math.max(0, now - last) / 1000) * this._speed * this.replay.tickrate)
       last = now
       if (this.tick >= this.replay.end) {
         this.tick = this.replay.end
@@ -1125,7 +1127,8 @@ export class RadarclipPlayer {
     const wMain = g.measureText(main).width
     font(11, 500)
     const wSub = g.measureText(sub).width
-    pill(pad, pad, wMain + wSub + 22 * k, 26 * k)
+    const clockRight = pad + wMain + wSub + 22 * k
+    pill(pad, pad, clockRight - pad, 26 * k)
     font(15, 600, true)
     g.fillStyle = planted ? '#ff2b2b' : this.theme.fg
     g.textBaseline = 'middle'
@@ -1165,54 +1168,74 @@ export class RadarclipPlayer {
       }
       g.restore()
     }
+    // The feed stays in the top-right corner. A row that would reach the clock gets narrower
+    // instead: first without the assister's name, then with shorter and shorter names. Weapon and
+    // kill icons always stay. On narrow maps names start at 10 characters.
+    const narrow = this.canvas.clientWidth > 0 && this.canvas.clientWidth < 520
+    const clip = (name: string, max: number) => ([...name].length > max ? [...name].slice(0, max - 1).join('') + '…' : name)
+    const clockBottom = pad + 26 * k
     let y = pad
     for (const e of this.kills) {
       if (e.t > t || e.t <= t - FEED * r.tickrate) continue
       type Part = { w: number; draw: (x: number, cy: number) => void }
-      const parts: Part[] = []
-      const name = (ix: number | undefined, fallback: string) => {
-        const str = ix != null ? r.players[ix]?.name ?? fallback : fallback
-        font(12, ix === focusIx ? 600 : 500)
-        const w = g.measureText(str).width
-        const bold = ix === focusIx
-        parts.push({ w, draw: (x, cy) => { font(12, bold ? 600 : 500); g.fillStyle = ix != null ? this.sideColor(ix) : this.theme.muted; g.fillText(str, x, cy) } })
-      }
-      const sym = (n: keyof typeof SYMBOL) => parts.push({ w: SYM, draw: (x, cy) => symbol(n, x, cy) })
-      const picture = (weapon: string, h: number, mirror: boolean) => {
-        const img = this.icon(weapon)
-        if (img && img.naturalWidth) {
-          const w = (img.naturalWidth / img.naturalHeight) * h
-          parts.push({ w, draw: (x, cy) => {
-            g.save()
-            // The pictures point left; mirrored, the barrel points at the victim.
-            if (mirror) { g.translate(x + w, cy - h / 2); g.scale(-1, 1) } else g.translate(x, cy - h / 2)
-            g.drawImage(img, 0, 0, w, h)
-            g.restore()
-          } })
-          return true
+      const build = (maxName: number, assisterName: boolean): Part[] => {
+        const parts: Part[] = []
+        const name = (ix: number | undefined, fallback: string) => {
+          const full = ix != null ? r.players[ix]?.name ?? fallback : fallback
+          const str = clip(full, maxName)
+          font(12, ix === focusIx ? 600 : 500)
+          const w = g.measureText(str).width
+          const bold = ix === focusIx
+          parts.push({ w, draw: (x, cy) => { font(12, bold ? 600 : 500); g.fillStyle = ix != null ? this.sideColor(ix) : this.theme.muted; g.fillText(str, x, cy) } })
         }
-        return false
+        const sym = (n: keyof typeof SYMBOL) => parts.push({ w: SYM, draw: (x, cy) => symbol(n, x, cy) })
+        const picture = (weapon: string, h: number, mirror: boolean) => {
+          const img = this.icon(weapon)
+          if (img && img.naturalWidth) {
+            const w = (img.naturalWidth / img.naturalHeight) * h
+            parts.push({ w, draw: (x, cy) => {
+              g.save()
+              // The pictures point left; mirrored, the barrel points at the victim.
+              if (mirror) { g.translate(x + w, cy - h / 2); g.scale(-1, 1) } else g.translate(x, cy - h / 2)
+              g.drawImage(img, 0, 0, w, h)
+              g.restore()
+            } })
+            return true
+          }
+          return false
+        }
+        if (e.blind) sym('blind')
+        name(e.attacker, 'world')
+        // Without the assister's name a plain assist is left out; a flash assist keeps its icon.
+        if (e.assister != null && (assisterName || e.flashassist)) {
+          font(12, 500)
+          const plus = '+'
+          parts.push({ w: g.measureText(plus).width, draw: (x, cy) => { font(12, 500); g.fillStyle = this.theme.muted; g.fillText(plus, x, cy) } })
+          if (e.flashassist && !picture('flashbang_assist', SYM, false)) sym('blind')
+          if (assisterName) name(e.assister, '')
+        }
+        if (!picture(e.weapon, ICON_H, true)) {
+          const w = weaponName(e.weapon)
+          font(12, 500)
+          parts.push({ w: g.measureText(w).width, draw: (x, cy) => { font(12, 500); g.fillStyle = this.theme.muted; g.fillText(w, x, cy) } })
+        }
+        if (e.noscope) sym('noscope')
+        if (e.smoke) sym('smoke')
+        if ((e.pen ?? 0) > 0) sym('wallbang')
+        if (e.hs) sym('headshot')
+        name(e.victim, '')
+        return parts
       }
-      if (e.blind) sym('blind')
-      name(e.attacker, 'world')
-      if (e.assister != null) {
-        font(12, 500)
-        const plus = '+'
-        parts.push({ w: g.measureText(plus).width, draw: (x, cy) => { font(12, 500); g.fillStyle = this.theme.muted; g.fillText(plus, x, cy) } })
-        if (e.flashassist && !picture('flashbang_assist', SYM, false)) sym('blind')
-        name(e.assister, '')
+      const width = (parts: Part[]) => parts.reduce((a, p) => a + p.w, 0) + GAP * (parts.length - 1) + 16 * k
+      const room = (y < clockBottom + 2 * k ? W - pad - (clockRight + 8 * k) : W - 2 * pad)
+      const first = narrow ? 10 : Infinity
+      const tries: [number, boolean][] = [[first, true], [first, false], [10, false], [8, false], [6, false], [4, false]]
+      let parts = build(first, true)
+      for (const [max, assister] of tries) {
+        parts = build(max, assister)
+        if (width(parts) <= room) break
       }
-      if (!picture(e.weapon, ICON_H, true)) {
-        const w = weaponName(e.weapon)
-        font(12, 500)
-        parts.push({ w: g.measureText(w).width, draw: (x, cy) => { font(12, 500); g.fillStyle = this.theme.muted; g.fillText(w, x, cy) } })
-      }
-      if (e.noscope) sym('noscope')
-      if (e.smoke) sym('smoke')
-      if ((e.pen ?? 0) > 0) sym('wallbang')
-      if (e.hs) sym('headshot')
-      name(e.victim, '')
-      const total = parts.reduce((a, p) => a + p.w, 0) + GAP * (parts.length - 1) + 16 * k
+      const total = width(parts)
       const x = W - pad - total
       pill(x, y, total, H_ROW)
       if (focusIx != null && (e.attacker === focusIx || e.victim === focusIx)) {
