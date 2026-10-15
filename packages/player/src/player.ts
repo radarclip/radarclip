@@ -92,6 +92,8 @@ const withAlpha = (color: string, a: number) => {
   return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`
 }
 const DANGER = '#ff6b5e'
+/** Utility keeps its in-game reading (design system util-* tokens). */
+const UTIL = { smoke: '#cfd3d8', fire: '#ff5a1f', flash: '#ffffff', he: '#9cff57' }
 const clock = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.floor(Math.max(0, s) % 60)).padStart(2, '0')}`
 
 /** Radars registered by map name (e.g. by a page that hosts them). */
@@ -585,66 +587,127 @@ export class RadarclipPlayer {
       g.lineTo(x2, y2)
     }
 
-    // Smokes and fires.
+    // Smokes and fires at their real size, outlined in the thrower's side colour; once grown, a
+    // countdown ring inside the edge shows the time left.
     for (const e of r.events) {
       if ((e.type !== 'smoke' && e.type !== 'molotov') || t < e.t || t > e.until || !this.onFloor(e.z)) continue
+      const smoke = e.type === 'smoke'
       const [x, y] = this.px(e.x, e.y)
-      const grow = Math.min(1, (t - e.t) / (0.8 * sec))
+      const grow = Math.min(1, (t - e.t) / ((smoke ? 0.8 : 1) * sec))
       const fade = Math.min(1, (e.until - t) / (1.5 * sec))
-      circle(x, y, ((e.type === 'smoke' ? SMOKE_R : FIRE_R) / this.radar.scale) * grow)
-      g.globalAlpha = (e.type === 'smoke' ? 0.78 : 0.5) * fade
-      g.fillStyle = e.type === 'smoke' ? '#cfd3d8' : '#ff5a1f'
+      const rad = ((smoke ? SMOKE_R : FIRE_R) / this.radar.scale) * grow
+      circle(x, y, rad)
+      g.globalAlpha = (smoke ? 0.74 : 0.42) * fade
+      g.fillStyle = smoke ? UTIL.smoke : UTIL.fire
       g.fill()
       g.globalAlpha = fade
-      g.lineWidth = 1.5 * u
-      g.strokeStyle = this.color(e.by)
-      g.stroke()
-    }
-    g.globalAlpha = 1
-
-    // Flash / HE pops.
-    for (const e of r.events) {
-      if (e.type !== 'flash' && e.type !== 'he') continue
-      const p = (t - e.t) / (0.6 * sec)
-      if (p < 0 || p > 1 || !this.onFloor(e.z)) continue
-      const [x, y] = this.px(e.x, e.y)
-      circle(x, y, (6 + 22 * p) * u)
-      g.globalAlpha = 0.85 * (1 - p)
-      g.fillStyle = e.type === 'flash' ? '#ffffff' : '#9cff57'
-      g.fill()
-      g.globalAlpha = 1 - p
       g.lineWidth = 1.2 * u
       g.strokeStyle = this.color(e.by)
       g.stroke()
+      if (grow >= 1 && rad > 8 * u) {
+        const rr = rad - 3 * u
+        circle(x, y, rr)
+        g.lineWidth = 2.6 * u
+        g.strokeStyle = 'rgba(14,16,20,.55)'
+        g.stroke()
+        g.beginPath()
+        g.arc(x, y, rr, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.max(0, (e.until - t) / Math.max(1, e.until - e.t)))
+        g.lineWidth = 2 * u
+        g.strokeStyle = smoke ? '#ffffff' : '#ffd7a8'
+        g.stroke()
+      }
     }
     g.globalAlpha = 1
 
-    // Grenades in flight.
+    // Flash: a starburst at the pop, then a line in the thrower's colour to every enemy it
+    // blinded, for as long as they are blind. HE: an expanding ring (it leaves no area).
+    for (const e of r.events) {
+      if (e.type !== 'flash' && e.type !== 'he') continue
+      if (t < e.t || !this.onFloor(e.z)) continue
+      const [x, y] = this.px(e.x, e.y)
+      const p = (t - e.t) / (0.6 * sec)
+      if (e.type === 'flash') {
+        const thrower = e.by != null ? r.players[e.by]?.side : undefined
+        for (const b of r.events) {
+          if (b.type !== 'blind' || Math.abs(b.t - e.t) > 2 || b.by !== e.by || t > b.until) continue
+          if (thrower && r.players[b.victim]?.side === thrower) continue // team and self flashes stay off the map
+          const v = stateAt(r, b.victim, t)
+          if (!v) continue
+          const [vx2, vy2] = this.px(v.x, v.y)
+          line(x, y, vx2, vy2)
+          g.globalAlpha = 0.7 * Math.min(1, (b.until - t) / (0.5 * sec))
+          g.lineWidth = 1.2 * u
+          g.strokeStyle = this.color(e.by)
+          g.stroke()
+          g.globalAlpha = 1
+        }
+        if (p <= 1) {
+          const rays = (7 + 14 * p) * u
+          g.globalAlpha = 1 - p
+          g.lineWidth = 1.6 * u
+          g.strokeStyle = UTIL.flash
+          g.beginPath()
+          for (let i = 0; i < 8; i++) {
+            const a = (i * Math.PI) / 4, r0 = rays * (i % 2 ? 0.45 : 0.3), r1 = rays * (i % 2 ? 0.75 : 1)
+            g.moveTo(x + Math.cos(a) * r0, y + Math.sin(a) * r0)
+            g.lineTo(x + Math.cos(a) * r1, y + Math.sin(a) * r1)
+          }
+          g.stroke()
+          g.globalAlpha = 1
+        }
+      } else if (p <= 1) {
+        circle(x, y, (6 + 26 * (1 - Math.pow(1 - p, 3))) * u)
+        g.globalAlpha = 1 - p
+        g.lineWidth = 2 * u
+        g.strokeStyle = UTIL.he
+        g.stroke()
+        g.globalAlpha = 1
+      }
+    }
+
+    // Grenades in flight: a dashed path in the thrower's colour from where it was thrown, so you
+    // see where it came from, and the grenade as a dot in the same colour with a dark edge.
     for (const n of r.nades) {
       const m = n.t.length
-      if (!m || t < n.t[0] || t > n.t[m - 1] + 0.15 * sec) continue
-      const col = this.color(n.by)
-      g.beginPath()
-      let head: [number, number] | null = null
-      for (let i = 0; i < m && n.t[i] <= t; i++) {
-        if (!this.onFloor(n.z[i])) continue
-        const [x, y] = this.px(n.x[i], n.y[i])
-        head ? g.lineTo(x, y) : g.moveTo(x, y)
-        head = [x, y]
+      // A grenade stays an entity after it lands (smokes until they fade): the flight ends at
+      // the last sample where it still moved.
+      let land = m - 1
+      while (land > 0 && Math.abs(n.x[land] - n.x[land - 1]) + Math.abs(n.y[land] - n.y[land - 1]) + Math.abs(n.z[land] - n.z[land - 1]) < 3) land--
+      if (!m || t < n.t[0] || t > n.t[land]) continue
+      const at = (q: number): [number, number, number] | null => {
+        let i = 0
+        while (i < m - 1 && n.t[i + 1] < q) i++
+        const k = i < m - 1 ? Math.min(1, Math.max(0, (q - n.t[i]) / Math.max(1, n.t[i + 1] - n.t[i]))) : 0
+        const j = Math.min(i + 1, m - 1)
+        const z = n.z[i] + (n.z[j] - n.z[i]) * k
+        if (!this.onFloor(z)) return null
+        const [x, y] = this.px(n.x[i] + (n.x[j] - n.x[i]) * k, n.y[i] + (n.y[j] - n.y[i]) * k)
+        return [x, y, z]
       }
-      if (!head) continue
+      g.beginPath()
+      let started = false
+      for (let i = 0; i <= land && n.t[i] <= t; i++) {
+        if (!this.onFloor(n.z[i])) { started = false; continue }
+        const [x, y] = this.px(n.x[i], n.y[i])
+        started ? g.lineTo(x, y) : g.moveTo(x, y)
+        started = true
+      }
+      const tip = at(t)
+      if (tip && started) g.lineTo(tip[0], tip[1])
       g.setLineDash([2 * u, 2.5 * u])
       g.lineWidth = 1.3 * u
-      g.strokeStyle = col
+      g.strokeStyle = this.color(n.by)
       g.globalAlpha = 0.9
       g.stroke()
       g.setLineDash([])
       g.globalAlpha = 1
-      circle(head[0], head[1], 2.6 * u)
-      g.fillStyle = col
+      const head = at(t)
+      if (!head) continue
+      circle(head[0], head[1], 3.5 * u)
+      g.fillStyle = this.color(n.by)
       g.fill()
-      g.lineWidth = 0.8 * u
-      g.strokeStyle = '#000'
+      g.lineWidth = u
+      g.strokeStyle = th.bg
       g.stroke()
     }
 
