@@ -102,6 +102,76 @@ pub struct Match {
     grenades: Vec<GrenadeRow>,
 }
 
+/// What the parser is doing, for progress displays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Stage {
+    /// Decompressing a .dem.bz2 / .dem.zst.
+    Unpack,
+    /// Pass 1: game events.
+    Events,
+    /// Pass 2: player positions and state.
+    Players,
+    /// Pass 3: grenade flights.
+    Grenades,
+}
+
+/// Progress of [`Match::parse_with_progress`]: the stage, how far it is (0…1), and an estimate of
+/// the whole parse (0…1), weighted by how long each stage usually takes.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+pub struct Progress {
+    pub stage: Stage,
+    pub done: f32,
+    pub total: f32,
+}
+
+/// Share of the whole parse per stage, measured in wasm on a 293 MB demo: events 2.0 s,
+/// players 3.3 s (2.0 s reading, 1.2 s demoparser post-processing, 0.1 s building tracks),
+/// grenades 1.8 s. Unpack only counts for compressed demos.
+const WEIGHTS: [(Stage, f32); 4] = [(Stage::Unpack, 0.25), (Stage::Events, 0.27), (Stage::Players, 0.49), (Stage::Grenades, 0.24)];
+/// Part of the players stage spent reading the demo; the rest is post-processing and tracks.
+const PLAYERS_READ: f32 = 0.6;
+
+type ProgressFn = std::rc::Rc<dyn Fn(Progress)>;
+
+/// Maps a stage's own 0…1 onto the whole parse.
+struct Meter {
+    cb: ProgressFn,
+    compressed: bool,
+}
+
+impl Meter {
+    fn span(&self, stage: Stage) -> (f32, f32) {
+        let used: Vec<(Stage, f32)> = WEIGHTS.iter().copied().filter(|(s, _)| self.compressed || *s != Stage::Unpack).collect();
+        let sum: f32 = used.iter().map(|(_, w)| w).sum();
+        let mut start = 0.0;
+        for (s, w) in used {
+            if s == stage {
+                return (start / sum, w / sum);
+            }
+            start += w;
+        }
+        (1.0, 0.0)
+    }
+
+    fn report(&self, stage: Stage, done: f32) {
+        let (start, width) = self.span(stage);
+        (self.cb)(Progress { stage, done, total: (start + width * done).min(1.0) });
+    }
+
+    /// Run one parser pass as the first `share` of `stage`, reporting how far it reads.
+    fn pass(&self, stage: Stage, share: f32, run: impl FnOnce() -> Result<DemoOutput, String>) -> Result<DemoOutput, String> {
+        self.report(stage, 0.0);
+        let (cb, compressed) = (self.cb.clone(), self.compressed);
+        let meter = Meter { cb, compressed };
+        parser::second_pass::parser::set_progress(Some(Box::new(move |at, total| meter.report(stage, share * at as f32 / total.max(1) as f32))));
+        let out = run();
+        parser::second_pass::parser::set_progress(None);
+        self.report(stage, share);
+        out
+    }
+}
+
 fn pass(bytes: &[u8], props: &[&str], other: &[&str], events: &[&str], ticks: Vec<i32>, grenades: bool) -> Result<DemoOutput, String> {
     let props: Vec<String> = props.iter().map(|s| s.to_string()).collect();
     let other: Vec<String> = other.iter().map(|s| s.to_string()).collect();
@@ -252,13 +322,25 @@ pub fn decompress(bytes: &[u8]) -> Result<std::borrow::Cow<'_, [u8]>, String> {
 impl Match {
     /// Read a demo (plain, .bz2 or .zst).
     pub fn parse(bytes: &[u8]) -> Result<Match, String> {
+        Self::parse_with_progress(bytes, std::rc::Rc::new(|_| {}))
+    }
+
+    /// [`Match::parse`], calling `progress` as it goes (every few MB of each pass).
+    pub fn parse_with_progress(bytes: &[u8], progress: ProgressFn) -> Result<Match, String> {
+        let meter = Meter { cb: progress, compressed: bytes.starts_with(b"BZh") || bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) };
+        if meter.compressed {
+            meter.report(Stage::Unpack, 0.0);
+        }
         let bytes = decompress(bytes)?;
+        if meter.compressed {
+            meter.report(Stage::Unpack, 1.0);
+        }
         if !bytes.starts_with(b"PBDEMS2") {
             return Err("not a CS2 demo (expected PBDEMS2 header)".into());
         }
         let bytes = &bytes[..];
         // Pass 1: game events (player props attached as user_X, attacker_yaw, …).
-        let ev = pass(bytes, &["X", "Y", "Z", "yaw"], &["is_warmup_period"], EVENTS, vec![], false)?;
+        let ev = meter.pass(Stage::Events, 1.0, || pass(bytes, &["X", "Y", "Z", "yaw"], &["is_warmup_period"], EVENTS, vec![], false))?;
         let map = ev.header.as_ref().and_then(|h| h.get("map_name").cloned()).unwrap_or_default();
         let events = ev.game_events;
         let last_tick = events.iter().map(|e| e.tick).max().unwrap_or(0);
@@ -298,7 +380,7 @@ impl Match {
         // Pass 2: player state every GRID ticks.
         let slots = (last_tick + 10 * TICKRATE as i32) / GRID + 1;
         let ticks: Vec<i32> = (0..slots).map(|s| s * GRID).collect();
-        let st = pass(bytes, TICK_PROPS, &[], &[], ticks, false)?;
+        let st = meter.pass(Stage::Players, PLAYERS_READ, || pass(bytes, TICK_PROPS, &[], &[], ticks, false))?;
         let (tick, steamid, name) = (column(&st, "tick"), column(&st, "steamid"), column(&st, "name"));
         let (x, y, z, yaw) = (column(&st, "X"), column(&st, "Y"), column(&st, "Z"), column(&st, "yaw"));
         let (hp, armor, alive, team) = (column(&st, "health"), column(&st, "armor_value"), column(&st, "is_alive"), column(&st, "team_num"));
@@ -310,6 +392,9 @@ impl Match {
         let mut samples: Vec<Vec<Option<Raw>>> = vec![];
         let (mut weapons, mut weapon_ix, mut places, mut place_ix) = (vec![], AHashMap::default(), vec![], AHashMap::default());
         for i in 0..rows {
+            if i % 65_536 == 0 {
+                meter.report(Stage::Players, PLAYERS_READ + (1.0 - PLAYERS_READ) * i as f32 / rows.max(1) as f32);
+            }
             let Some(t) = num_at(tick, i) else { continue };
             let sid = u64_at(steamid, i).map(|s| s.to_string());
             let nm = str_at(name, i);
@@ -338,8 +423,10 @@ impl Match {
             }
         }
 
+        meter.report(Stage::Players, 1.0);
+
         // Pass 3: grenade projectiles, one row per tick of flight.
-        let gr = pass(bytes, &[], &[], &[], vec![], true)?;
+        let gr = meter.pass(Stage::Grenades, 1.0, || pass(bytes, &[], &[], &[], vec![], true))?;
         let (gtype, gent, gtick) = (column(&gr, "grenade_type"), column(&gr, "grenade_entity_id"), column(&gr, "tick"));
         let (gx, gy, gz, gsid, gname) = (column(&gr, "x"), column(&gr, "y"), column(&gr, "z"), column(&gr, "steamid"), column(&gr, "name"));
         let mut grenades = vec![];
@@ -559,5 +646,32 @@ impl Match {
             nades,
             shots: out_shots,
         })
+    }
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    /// Stages follow each other without gaps or overlaps and the last one ends at 100 %.
+    #[test]
+    fn stages_fill_the_bar_in_order() {
+        for compressed in [false, true] {
+            let seen = Rc::new(RefCell::new(vec![]));
+            let log = seen.clone();
+            let meter = Meter { cb: Rc::new(move |p: Progress| log.borrow_mut().push(p.total)), compressed };
+            let stages = if compressed { vec![Stage::Unpack, Stage::Events, Stage::Players, Stage::Grenades] } else { vec![Stage::Events, Stage::Players, Stage::Grenades] };
+            for s in &stages {
+                for d in [0.0, 0.5, 1.0] {
+                    meter.report(*s, d);
+                }
+            }
+            let seen = seen.borrow();
+            assert_eq!(seen[0], 0.0);
+            assert!((seen.last().unwrap() - 1.0).abs() < 1e-6, "ends at {}", seen.last().unwrap());
+            assert!(seen.windows(2).all(|w| w[1] >= w[0] - 1e-6), "not monotonic: {seen:?}");
+        }
     }
 }

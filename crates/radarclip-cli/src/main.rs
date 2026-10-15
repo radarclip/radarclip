@@ -60,7 +60,16 @@ fn main() {
 fn load(demo: &PathBuf) -> Result<Match, String> {
     let bytes = std::fs::read(demo).map_err(|e| format!("{}: {e}", demo.display()))?;
     let t = Instant::now();
-    let m = Match::parse(&bytes)?;
+    // On a terminal, one line that updates as the parser goes.
+    let tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+    let m = Match::parse_with_progress(&bytes, std::rc::Rc::new(move |p: radarclip_parser::Progress| {
+        if tty {
+            eprint!("\r{:>3.0}%  {:<9}", p.total * 100.0, format!("{:?}", p.stage).to_lowercase());
+        }
+    }))?;
+    if tty {
+        eprint!("\r{:30}\r", "");
+    }
     eprintln!("parsed {} ({:.0} MB) in {:.1} s", demo.display(), bytes.len() as f64 / 1e6, t.elapsed().as_secs_f64());
     Ok(m)
 }

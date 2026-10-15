@@ -1,7 +1,7 @@
 import '@radarclip/controls'
 import { RadarclipPlayer, readClip, type RadarclipPlayerElement } from '@radarclip/player'
 import { radars } from '@radarclip/radars'
-import type { Response } from './worker.js'
+import type { Response, Stage } from './worker.js'
 
 interface Info {
   map: string
@@ -24,24 +24,49 @@ const pending = new Map<number, (json: string) => void>()
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
 
+const STAGE: Record<Stage, string> = {
+  read: 'Reading the demo', unpack: 'Unpacking', events: 'Finding rounds and kills', players: 'Tracking players', grenades: 'Following grenades',
+}
+
+/**
+ * The bar follows the worker's progress and keeps creeping a little while no update comes (the
+ * parser has a quiet second between passes), so it never looks frozen.
+ */
+let target = 0, shown = 0, lastUpdate = 0, stage: Stage = 'read', raf = 0
+function animate() {
+  const idle = performance.now() - lastUpdate > 300
+  const cap = Math.min(0.99, target + (idle ? 0.08 : 0))
+  shown = Math.max(shown, shown + (cap - shown) * (idle ? 0.01 : 0.25))
+  const bar = status.querySelector('progress'), label = status.querySelector('.stage')
+  if (bar) bar.value = shown
+  if (label) label.textContent = `${STAGE[stage]} · ${Math.round(shown * 100)} %`
+  raf = requestAnimationFrame(animate)
+}
+
 function open(file: File) {
-  status.innerHTML = `<progress max="${file.size}" value="0"></progress>`
+  target = shown = 0
+  stage = 'read'
+  cancelAnimationFrame(raf)
+  raf = requestAnimationFrame(animate)
+  status.innerHTML = `<progress max="1" value="0"></progress><span class="stage"></span>`
   worker.postMessage({ type: 'open', file })
 }
 
 worker.onmessage = ({ data }: MessageEvent<Response>) => {
   if (data.type === 'progress') {
-    const bar = status.querySelector('progress')
-    if (bar) bar.value = data.loaded
-    if (data.loaded >= data.size) status.insertAdjacentText('beforeend', ' Parsing…')
+    target = data.total
+    stage = data.stage
+    lastUpdate = performance.now()
   } else if (data.type === 'info') {
     info = data.info as Info
+    cancelAnimationFrame(raf)
     status.textContent = `Parsed in ${((data.readMs + data.parseMs) / 1000).toFixed(1)} s`
     show(info)
   } else if (data.type === 'clip') {
     pending.get(data.id)?.(data.json)
     pending.delete(data.id)
   } else if (data.type === 'error') {
+    if (data.id == null) cancelAnimationFrame(raf)
     status.textContent = `Error: ${data.message}`
     if (data.id != null) pending.delete(data.id)
   }

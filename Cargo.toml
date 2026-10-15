@@ -14,7 +14,7 @@ radarclip-parser = { path = "crates/radarclip-parser" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # demoparser2's parser crate from our fork (branch `radarclip`: wasm32 and protoc fixes).
-parser = { git = "https://github.com/radarclip/demoparser", rev = "126f080c6e82079fab75b8483188439e85657250" }
+parser = { git = "https://github.com/radarclip/demoparser", rev = "d2e23e0608fe75a352a0fb48f0c7c68428f7775c" }
 ahash = "0.8"
 
 [profile.release]
