@@ -665,7 +665,8 @@ export class RadarclipPlayer {
       }
     }
 
-    // Grenades in flight: a white dot with a soft shadow and a short fading streak.
+    // Grenades in flight: a dashed path in the thrower's colour from where it was thrown, so you
+    // see where it came from, and the grenade as a dot in the same colour with a dark edge.
     for (const n of r.nades) {
       const m = n.t.length
       // A grenade stays an entity after it lands (smokes until they fade): the flight ends at
@@ -683,26 +684,31 @@ export class RadarclipPlayer {
         const [x, y] = this.px(n.x[i] + (n.x[j] - n.x[i]) * k, n.y[i] + (n.y[j] - n.y[i]) * k)
         return [x, y, z]
       }
-      const steps = 10
-      for (let i = steps; i >= 1; i--) {
-        const q = t - (i * 0.025) * sec
-        if (q < n.t[0]) continue
-        const pt = at(q)
-        if (!pt) continue
-        circle(pt[0], pt[1], 2.4 * u * (1 - i / 14))
-        g.globalAlpha = 0.55 * (1 - i / steps)
-        g.fillStyle = '#ffffff'
-        g.fill()
+      g.beginPath()
+      let started = false
+      for (let i = 0; i <= land && n.t[i] <= t; i++) {
+        if (!this.onFloor(n.z[i])) { started = false; continue }
+        const [x, y] = this.px(n.x[i], n.y[i])
+        started ? g.lineTo(x, y) : g.moveTo(x, y)
+        started = true
       }
+      const tip = at(t)
+      if (tip && started) g.lineTo(tip[0], tip[1])
+      g.setLineDash([2 * u, 2.5 * u])
+      g.lineWidth = 1.3 * u
+      g.strokeStyle = this.color(n.by)
+      g.globalAlpha = 0.9
+      g.stroke()
+      g.setLineDash([])
       g.globalAlpha = 1
       const head = at(t)
       if (!head) continue
-      circle(head[0] + 1.5 * u, head[1] + 2 * u, 2.6 * u)
-      g.fillStyle = 'rgba(0,0,0,.4)'
+      circle(head[0], head[1], 3.5 * u)
+      g.fillStyle = this.color(n.by)
       g.fill()
-      circle(head[0], head[1], 2.6 * u)
-      g.fillStyle = '#ffffff'
-      g.fill()
+      g.lineWidth = u
+      g.strokeStyle = th.bg
+      g.stroke()
     }
 
     // Shots: a line to the player hit, or a tracer along the aim.
