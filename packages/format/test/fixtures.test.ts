@@ -45,6 +45,16 @@ describe.each(fixtures)('%s', (file) => {
     expect(mid.x).toBeCloseTo((a.x + b.x) / 2, 3)
     expect(stateAt(r, p, r.start - 1)).toBeNull()
   })
+
+  it('has a position at every tick a player is alive, also right before a death', async () => {
+    const r = decode(await readClip(text))
+    for (const p of r.players) {
+      for (let t = r.start; t <= r.end; t++) {
+        const st = stateAt(r, p.index, t)
+        if (st) expect(Number.isFinite(st.x) && Number.isFinite(st.y) && Number.isFinite(st.yaw), `player ${p.index} tick ${t}`).toBe(true)
+      }
+    }
+  })
 })
 
 it('rejects other major versions', async () => {
