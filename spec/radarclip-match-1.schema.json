@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "radarclip-match/1",
+  "description": "A whole parsed CS2 match: every round as a full-round radarclip/1 clip. See radarclip-match-1.md.",
+  "type": "object",
+  "required": ["format", "map", "tickrate", "players", "rounds"],
+  "properties": {
+    "format": {"const": "radarclip-match/1"},
+    "map": {"type": "string", "minLength": 1},
+    "tickrate": {"type": "integer", "minimum": 1},
+    "parser": {"type": "string"},
+    "players": {
+      "type": "array",
+      "items": {"type": "object", "required": ["key", "name"], "properties": {"key": {"type": "string", "minLength": 1}, "name": {"type": "string"}}}
+    },
+    "rounds": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["number", "seconds", "keys", "clip"],
+        "properties": {
+          "number": {"type": "integer", "minimum": 1},
+          "seconds": {"type": "number", "minimum": 0},
+          "winner": {"enum": ["CT", "T", null]},
+          "keys": {"type": "array", "items": {"type": "string"}},
+          "clip": {"$ref": "radarclip-1.schema.json"}
+        }
+      }
+    }
+  }
+}

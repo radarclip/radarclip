@@ -7,7 +7,7 @@ use parser::parse_demo::{DemoOutput, Parser, ParsingMode};
 use parser::second_pass::game_events::GameEvent;
 use parser::second_pass::parser_settings::create_huffman_lookup_table;
 use parser::second_pass::variants::{VarVec, Variant};
-use radarclip_core::{encode_track, Clip, Event, Mark, Nade, Player, Quant, Sample, Shots, Tolerance, FORMAT};
+use radarclip_core::{encode_track, Clip, Event, Mark, MatchFile, MatchPlayer, MatchRound, Nade, Player, Quant, Sample, Shots, Tolerance, FORMAT, MATCH_FORMAT};
 
 /// Ticks between the player samples kept in memory (16 per second at 64 tick).
 pub const GRID: i32 = 4;
@@ -445,6 +445,33 @@ impl Match {
     }
 
     pub fn clip(&self, req: &ClipRequest) -> Result<Clip, String> {
+        self.clip_keyed(req).map(|(clip, _)| clip)
+    }
+
+    /// The whole match as `radarclip-match/1`: every round as a full-round clip (default
+    /// quantization and tolerance), with each player's key, so moments can be cut later without
+    /// the demo.
+    pub fn export(&self) -> Result<MatchFile, String> {
+        let rounds = self
+            .rounds
+            .iter()
+            .map(|r| {
+                let req = ClipRequest { title: format!("R{}", r.number), ..ClipRequest::new(r.number, 0.0, 1000.0) };
+                let (clip, keys) = self.clip_keyed(&req)?;
+                Ok(MatchRound { number: r.number, seconds: (r.end - r.freeze_end) as f32 / self.tickrate as f32, winner: r.winner.clone(), keys, clip })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(MatchFile {
+            format: MATCH_FORMAT.to_string(),
+            map: self.map.clone(),
+            tickrate: self.tickrate,
+            parser: format!("radarclip {}", env!("CARGO_PKG_VERSION")),
+            players: self.players.iter().map(|p| MatchPlayer { key: p.key.clone(), name: p.name.clone() }).collect(),
+            rounds,
+        })
+    }
+
+    fn clip_keyed(&self, req: &ClipRequest) -> Result<(Clip, Vec<String>), String> {
         let round = self.rounds.get((req.round as usize).wrapping_sub(1)).ok_or_else(|| format!("round {} not in 1..{}", req.round, self.rounds.len()))?;
         if req.step == 0 || req.step as i32 % GRID != 0 {
             return Err(format!("step must be a multiple of {GRID} ticks"));
@@ -626,7 +653,8 @@ impl Match {
             nades.push(Nade { kind: rows[0].kind.to_string(), by, path });
         }
 
-        Ok(Clip {
+        let keys = members.iter().map(|&(p, _)| self.players[p].key.clone()).collect();
+        Ok((Clip {
             format: FORMAT.to_string(),
             map: self.map.clone(),
             title: req.title.clone(),
@@ -645,7 +673,7 @@ impl Match {
             events,
             nades,
             shots: out_shots,
-        })
+        }, keys))
     }
 }
 

@@ -92,3 +92,31 @@ export interface Radar {
   image?: string
   lower?: string | null
 }
+
+/** radarclip-match/1, see spec/radarclip-match-1.md: a whole parsed match. */
+export interface MatchFile {
+  format: string
+  map: string
+  tickrate: number
+  /** What made it, e.g. `radarclip 0.1.0`. */
+  parser?: string
+  players: MatchPlayer[]
+  rounds: MatchRound[]
+}
+
+export interface MatchPlayer {
+  /** Steam64 id, or the name when the demo has none. */
+  key: string
+  name: string
+}
+
+export interface MatchRound {
+  number: number
+  /** From freeze end to round end. */
+  seconds: number
+  winner?: Side | null
+  /** `MatchPlayer.key` of each of `clip.players`, in the same order. */
+  keys: string[]
+  /** The full round. */
+  clip: Clip
+}

@@ -3,6 +3,45 @@
 
 use serde::{Deserialize, Serialize};
 
+mod cut;
+pub use cut::{cut, Cut};
+
+/// Format of a whole parsed match: every round as a full-round clip.
+pub const MATCH_FORMAT: &str = "radarclip-match/1";
+
+/// A whole parsed match (`radarclip-match/1`): every round as a full-round clip, so apps can
+/// reopen a match and cut moments out of it without the demo.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MatchFile {
+    pub format: String,
+    pub map: String,
+    pub tickrate: u32,
+    /// What made it, e.g. `radarclip 0.1.0`, so apps can offer a re-parse after parser updates.
+    #[serde(default)]
+    pub parser: String,
+    pub players: Vec<MatchPlayer>,
+    pub rounds: Vec<MatchRound>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MatchPlayer {
+    /// Steam64 id, or the name when the demo has none.
+    pub key: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MatchRound {
+    pub number: u32,
+    /// From freeze end to round end.
+    pub seconds: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub winner: Option<String>,
+    /// `MatchPlayer::key` of each of `clip.players`, in the same order.
+    pub keys: Vec<String>,
+    pub clip: Clip,
+}
+
 pub const FORMAT: &str = "radarclip/1";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

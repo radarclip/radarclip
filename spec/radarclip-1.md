@@ -7,6 +7,7 @@ utility, shots and kills, drawn on the map's radar. It holds only what a 2D view
 This document is the format's single source of truth. The JSON Schema
 [`radarclip-1.schema.json`](radarclip-1.schema.json) checks the structure;
 [`fixtures/`](fixtures) holds reference clips every implementation must read.
+A whole match is stored as [`radarclip-match/1`](radarclip-match-1.md), every round as a clip.
 
 ## Files
 

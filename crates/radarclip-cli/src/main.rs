@@ -18,6 +18,22 @@ enum Command {
     Info { demo: PathBuf },
     /// Decode a clip's tracks into one row per frame (reference output for other decoders).
     Decode { clip: PathBuf },
+    /// Save the whole match: every round as a full-round clip (radarclip-match/1).
+    Match {
+        demo: PathBuf,
+        /// Only these rounds, e.g. 3 or 1-4 (for small test files).
+        #[arg(long)]
+        rounds: Option<String>,
+        /// Replace names with "Player 1" … and Steam ids with "p1" … (for files you share).
+        #[arg(long)]
+        anonymize: bool,
+        /// Output file: .radarclip-match.json (readable) or .radarclip-match (deflated). Default: stdout JSON.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Indent the JSON.
+        #[arg(long)]
+        pretty: bool,
+    },
     /// Cut a clip. Times are seconds after the round's freeze end (round time 1:55 = 0).
     Clip {
         demo: PathBuf,
@@ -74,6 +90,23 @@ fn load(demo: &PathBuf) -> Result<Match, String> {
     Ok(m)
 }
 
+/// Write JSON as is (`.json`) or deflated; stdout when no path. Returns the bytes written.
+fn write_out(output: Option<&PathBuf>, json: &[u8]) -> Result<usize, String> {
+    let Some(path) = output else {
+        std::io::stdout().write_all(json).map_err(|e| e.to_string())?;
+        return Ok(json.len());
+    };
+    let bytes = if path.to_string_lossy().ends_with(".json") {
+        json.to_vec()
+    } else {
+        let mut enc = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::best());
+        enc.write_all(json).map_err(|e| e.to_string())?;
+        enc.finish().map_err(|e| e.to_string())?
+    };
+    std::fs::write(path, &bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(bytes.len())
+}
+
 fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
         Command::Info { demo } => {
@@ -119,20 +152,39 @@ fn run(cli: Cli) -> Result<(), String> {
             }
             let clip = m.clip(&req)?;
             let json = if pretty { serde_json::to_vec_pretty(&clip) } else { serde_json::to_vec(&clip) }.map_err(|e| e.to_string())?;
-            match output {
-                None => std::io::stdout().write_all(&json).map_err(|e| e.to_string())?,
-                Some(path) => {
-                    let bytes = if path.to_string_lossy().ends_with(".json") {
-                        json.clone()
-                    } else {
-                        let mut enc = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::best());
-                        enc.write_all(&json).map_err(|e| e.to_string())?;
-                        enc.finish().map_err(|e| e.to_string())?
-                    };
-                    std::fs::write(&path, &bytes).map_err(|e| format!("{}: {e}", path.display()))?;
-                    eprintln!("{} · {} frames · {} players · {} B ({} B JSON)", path.display(), clip.frames, clip.players.len(), bytes.len(), json.len());
+            let size = write_out(output.as_ref(), &json)?;
+            if let Some(path) = &output {
+                eprintln!("{} · {} frames · {} players · {} B ({} B JSON)", path.display(), clip.frames, clip.players.len(), size, json.len());
+            }
+        }
+        Command::Match { demo, rounds, anonymize, output, pretty } => {
+            let m = load(&demo)?;
+            let mut file = m.export()?;
+            if let Some(spec) = rounds {
+                let (a, b) = spec.split_once('-').unwrap_or((&spec, &spec));
+                let parse = |v: &str| v.trim().parse::<u32>().map_err(|_| format!("bad --rounds {spec:?}, expected N or N-M"));
+                let (a, b) = (parse(a)?, parse(b)?);
+                file.rounds.retain(|r| (a..=b).contains(&r.number));
+            }
+            if anonymize {
+                let alias: std::collections::HashMap<String, usize> = file.players.iter().enumerate().map(|(i, p)| (p.key.clone(), i + 1)).collect();
+                for (i, p) in file.players.iter_mut().enumerate() {
+                    (p.key, p.name) = (format!("p{}", i + 1), format!("Player {}", i + 1));
+                }
+                for r in &mut file.rounds {
+                    for (key, p) in r.keys.iter_mut().zip(&mut r.clip.players) {
+                        let n = alias.get(key.as_str()).copied().unwrap_or(0);
+                        (*key, p.name) = (format!("p{n}"), format!("Player {n}"));
+                    }
                 }
             }
+            let json = if pretty { serde_json::to_vec_pretty(&file) } else { serde_json::to_vec(&file) }.map_err(|e| e.to_string())?;
+            let size = write_out(output.as_ref(), &json)?;
+            let demo_size = std::fs::metadata(&demo).map(|m| m.len()).unwrap_or(0);
+            eprintln!(
+                "{} rounds · {:.0} MB demo → {:.0} KB ({:.0} KB JSON), 1/{:.0}",
+                file.rounds.len(), demo_size as f64 / 1e6, size as f64 / 1e3, json.len() as f64 / 1e3, demo_size as f64 / size.max(1) as f64
+            );
         }
     }
     Ok(())
