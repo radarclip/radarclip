@@ -7,7 +7,7 @@ use parser::parse_demo::{DemoOutput, Parser, ParsingMode};
 use parser::second_pass::game_events::GameEvent;
 use parser::second_pass::parser_settings::create_huffman_lookup_table;
 use parser::second_pass::variants::{VarVec, Variant};
-use radarclip_core::{encode_track, Clip, Event, Mark, MatchFile, MatchPlayer, MatchRound, Nade, Player, Quant, Sample, Shots, Tolerance, FORMAT, MATCH_FORMAT};
+use radarclip_core::{change_list, encode_track, Clip, Defuse, Detail, Event, Mark, MatchFile, MatchPlayer, MatchRound, Nade, Player, PlayerDetail, Quant, Sample, Shots, Tolerance, FORMAT, MATCH_FORMAT};
 
 /// Ticks between the player samples kept in memory (16 per second at 64 tick).
 pub const GRID: i32 = 4;
@@ -19,8 +19,13 @@ const EVENTS: &[&str] = &[
     "round_freeze_end", "round_end", "round_announce_match_start", "player_death", "player_hurt",
     "player_blind", "weapon_fire", "smokegrenade_detonate", "smokegrenade_expired", "inferno_startburn",
     "inferno_expire", "flashbang_detonate", "hegrenade_detonate", "bomb_planted", "bomb_defused", "bomb_exploded",
+    "bomb_begindefuse", "bomb_abortdefuse",
 ];
-const TICK_PROPS: &[&str] = &["X", "Y", "Z", "yaw", "health", "armor_value", "active_weapon_name", "last_place_name", "team_num", "is_alive"];
+const TICK_PROPS: &[&str] = &[
+    "X", "Y", "Z", "yaw", "health", "armor_value", "active_weapon_name", "last_place_name", "team_num", "is_alive",
+    // Detail: loadout, money, sight.
+    "inventory", "balance", "current_equip_value", "has_helmet", "has_defuser", "approximate_spotted_by",
+];
 const NOT_SHOTS: &[&str] = &["smokegrenade", "flashbang", "hegrenade", "incgrenade", "molotov", "decoy", "c4"];
 
 #[derive(Debug, Clone)]
@@ -50,6 +55,14 @@ struct Raw {
     team: u32,
     weapon: u32,
     place: u32,
+    money: i32,
+    equip: i32,
+    helmet: bool,
+    kit: bool,
+    /// Index into `Match::gear`.
+    gear: u32,
+    /// Index into `Match::seen`.
+    seen: u32,
 }
 
 struct GrenadeRow {
@@ -100,6 +113,19 @@ pub struct Match {
     places: Vec<String>,
     events: Vec<GameEvent>,
     grenades: Vec<GrenadeRow>,
+    /// Loadouts (sorted item names), interned.
+    gear: Vec<Vec<String>>,
+    /// Keys of the players who have someone in sight, sorted, interned.
+    seen: Vec<Vec<String>>,
+}
+
+/// A whole-round clip with what is needed to add its detail.
+struct Keyed {
+    clip: Clip,
+    keys: Vec<String>,
+    ticks: Vec<i32>,
+    /// Index into `Match::players` of each clip player.
+    members: Vec<usize>,
 }
 
 /// What the parser is doing, for progress displays.
@@ -236,6 +262,33 @@ fn u64_at(col: Option<&VarVec>, i: usize) -> Option<u64> {
         VarVec::U64(v) => v.get(i).copied().flatten(),
         _ => None,
     }
+}
+
+fn strings_at(col: Option<&VarVec>, i: usize) -> Option<&[String]> {
+    match col? {
+        VarVec::StringVec(v) => v.get(i).map(|s| s.as_slice()),
+        _ => None,
+    }
+}
+
+fn u64s_at(col: Option<&VarVec>, i: usize) -> Option<&[u64]> {
+    match col? {
+        VarVec::U64Vec(v) => v.get(i).map(|s| s.as_slice()),
+        _ => None,
+    }
+}
+
+/// Intern a list, keyed by its joined items.
+fn intern_list(table: &mut Vec<Vec<String>>, index: &mut AHashMap<String, u32>, mut items: Vec<String>) -> u32 {
+    items.sort_unstable();
+    let key = items.join("\u{1}");
+    if let Some(&i) = index.get(&key) {
+        return i;
+    }
+    let i = table.len() as u32;
+    table.push(items);
+    index.insert(key, i);
+    i
 }
 
 fn str_at(col: Option<&VarVec>, i: usize) -> Option<&str> {
@@ -385,6 +438,9 @@ impl Match {
         let (x, y, z, yaw) = (column(&st, "X"), column(&st, "Y"), column(&st, "Z"), column(&st, "yaw"));
         let (hp, armor, alive, team) = (column(&st, "health"), column(&st, "armor_value"), column(&st, "is_alive"), column(&st, "team_num"));
         let (weapon, place) = (column(&st, "active_weapon_name"), column(&st, "last_place_name"));
+        let (inventory, balance, equip) = (column(&st, "inventory"), column(&st, "balance"), column(&st, "current_equip_value"));
+        let (helmet, kit, spotted) = (column(&st, "has_helmet"), column(&st, "has_defuser"), column(&st, "approximate_spotted_by"));
+        let (mut gear, mut gear_ix, mut seen, mut seen_ix) = (vec![], AHashMap::default(), vec![], AHashMap::default());
         let rows = tick.map(var_len).unwrap_or(0);
 
         let mut players: Vec<PlayerInfo> = vec![];
@@ -419,6 +475,12 @@ impl Match {
                     team: num_at(team, i).unwrap_or(0.0) as u32,
                     weapon: intern(&mut weapons, &mut weapon_ix, str_at(weapon, i).unwrap_or("")),
                     place: intern(&mut places, &mut place_ix, str_at(place, i).unwrap_or("")),
+                    money: num_at(balance, i).unwrap_or(0.0) as i32,
+                    equip: num_at(equip, i).unwrap_or(0.0) as i32,
+                    helmet: num_at(helmet, i).map(|v| v > 0.0).unwrap_or(false),
+                    kit: num_at(kit, i).map(|v| v > 0.0).unwrap_or(false),
+                    gear: intern_list(&mut gear, &mut gear_ix, strings_at(inventory, i).map(|s| s.to_vec()).unwrap_or_default()),
+                    seen: intern_list(&mut seen, &mut seen_ix, u64s_at(spotted, i).unwrap_or_default().iter().filter(|&&s| s != 0).map(|s| s.to_string()).collect()),
                 });
             }
         }
@@ -441,24 +503,25 @@ impl Match {
             });
         }
 
-        Ok(Match { map, tickrate: TICKRATE, rounds, players, samples, weapons, places, events, grenades })
+        Ok(Match { map, tickrate: TICKRATE, rounds, players, samples, weapons, places, events, grenades, gear, seen })
     }
 
     pub fn clip(&self, req: &ClipRequest) -> Result<Clip, String> {
-        self.clip_keyed(req).map(|(clip, _)| clip)
+        self.clip_keyed(req).map(|k| k.clip)
     }
 
     /// The whole match as `radarclip-match/1`: every round as a full-round clip (default
-    /// quantization and tolerance), with each player's key, so moments can be cut later without
-    /// the demo.
+    /// quantization and tolerance) with its detail, and each player's key, so moments can be cut
+    /// and rounds analysed later without the demo.
     pub fn export(&self) -> Result<MatchFile, String> {
         let rounds = self
             .rounds
             .iter()
             .map(|r| {
                 let req = ClipRequest { title: format!("R{}", r.number), ..ClipRequest::new(r.number, 0.0, 1000.0) };
-                let (clip, keys) = self.clip_keyed(&req)?;
-                Ok(MatchRound { number: r.number, seconds: (r.end - r.freeze_end) as f32 / self.tickrate as f32, winner: r.winner.clone(), keys, clip })
+                let k = self.clip_keyed(&req)?;
+                let detail = Some(self.detail(r, &k));
+                Ok(MatchRound { number: r.number, seconds: (r.end - r.freeze_end) as f32 / self.tickrate as f32, winner: r.winner.clone(), keys: k.keys, clip: k.clip, detail })
             })
             .collect::<Result<Vec<_>, String>>()?;
         Ok(MatchFile {
@@ -471,7 +534,51 @@ impl Match {
         })
     }
 
-    fn clip_keyed(&self, req: &ClipRequest) -> Result<(Clip, Vec<String>), String> {
+    /// Loadouts, money, sight and defuse attempts of one round, on the frames of its clip.
+    fn detail(&self, round: &Round, k: &Keyed) -> Detail {
+        let raw = |p: usize, t: i32| self.samples[p].get((t / GRID) as usize).copied().flatten();
+        let member_of: AHashMap<&str, usize> = k.members.iter().enumerate().map(|(i, &p)| (self.players[p].key.as_str(), i)).collect();
+        let (mut gear, mut gear_ix) = (vec![], AHashMap::default());
+        let mut players = vec![];
+        for &p in &k.members {
+            let at = |f: &dyn Fn(Raw) -> i64| change_list(k.ticks.iter().map(|&t| raw(p, t).map(f)));
+            let mut gear_of = vec![];
+            for &t in &k.ticks {
+                gear_of.push(raw(p, t).filter(|r| r.alive && r.hp > 0).map(|r| intern_list(&mut gear, &mut gear_ix, self.gear[r.gear as usize].clone()) as i64));
+            }
+            players.push(PlayerDetail {
+                gear: change_list(gear_of),
+                money: at(&|r| r.money as i64),
+                equip: at(&|r| r.equip as i64),
+                helmet: at(&|r| r.helmet as i64),
+                kit: at(&|r| r.kit as i64),
+                seen: at(&|r| self.seen[r.seen as usize].iter().filter_map(|key| member_of.get(key.as_str())).fold(0i64, |m, &i| m | 1 << i)),
+            });
+        }
+
+        // Defuse attempts: a start, then whatever ends it first.
+        let who = |e: &GameEvent| player_key(fstr(e, "user_steamid"), fstr(e, "user_name")).and_then(|key| member_of.get(key.as_str()).map(|&i| i as u32));
+        let in_round = |e: &&GameEvent| e.tick >= round.freeze_end && e.tick <= round.end;
+        let mut defuses = vec![];
+        for e in self.events.iter().filter(in_round).filter(|e| e.name == "bomb_begindefuse") {
+            let by = who(e);
+            let stop = self.events.iter().filter(in_round).filter(|x| x.tick >= e.tick).find(|x| match x.name.as_str() {
+                "bomb_abortdefuse" | "player_death" => who(x) == by && x.tick > e.tick,
+                "bomb_defused" | "bomb_exploded" => true,
+                _ => false,
+            });
+            defuses.push(Defuse {
+                t: (e.tick - round.freeze_end) as i64,
+                by,
+                kit: fnum(e, "haskit") == Some(1.0),
+                end: (stop.map(|x| x.tick).unwrap_or(round.end) - round.freeze_end) as i64,
+                done: stop.is_some_and(|x| x.name == "bomb_defused"),
+            });
+        }
+        Detail { gear, players, defuses }
+    }
+
+    fn clip_keyed(&self, req: &ClipRequest) -> Result<Keyed, String> {
         let round = self.rounds.get((req.round as usize).wrapping_sub(1)).ok_or_else(|| format!("round {} not in 1..{}", req.round, self.rounds.len()))?;
         if req.step == 0 || req.step as i32 % GRID != 0 {
             return Err(format!("step must be a multiple of {GRID} ticks"));
@@ -654,7 +761,8 @@ impl Match {
         }
 
         let keys = members.iter().map(|&(p, _)| self.players[p].key.clone()).collect();
-        Ok((Clip {
+        let member_ix = members.iter().map(|&(p, _)| p).collect();
+        let clip = Clip {
             format: FORMAT.to_string(),
             map: self.map.clone(),
             title: req.title.clone(),
@@ -673,7 +781,8 @@ impl Match {
             events,
             nades,
             shots: out_shots,
-        }, keys))
+        };
+        Ok(Keyed { clip, keys, ticks, members: member_ix })
     }
 }
 

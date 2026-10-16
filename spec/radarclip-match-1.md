@@ -39,6 +39,37 @@ two-round reference file (names and ids anonymised).
 - `parser` lets an app tell a file from an older parser apart and offer to parse the demo again
   for details it has learned since (new optional clip fields, for example).
 
+## Detail
+
+`rounds[].detail` (optional) holds what a replay doesn't have to draw but an analysis or a HUD can
+use. It lives next to the clip, not in it, so moments cut from a round stay as small as before.
+
+```jsonc
+"detail": {
+  "gear": [["AK-47", "Flashbang", "Flashbang", "Glock-18", "knife_t"], …],  // loadouts by index
+  "players": [                       // one per clip player, same order
+    {"gear":   [0, 3, 412, 7],       // change list: index into gear
+     "money":  [0, 3600, 2, 950],    // change list: money in the bank
+     "equip":  [0, 4900],            // change list: value of what the player carries
+     "helmet": [0, 1],               // change list: 0 or 1
+     "kit":    [0, 0],               // change list: defuse kit, 0 or 1
+     "seen":   [0, 0, 236, 96, 250, 0]}  // change list: bit mask of clip players who see them
+  ],
+  "defuses": [{"t": 7114, "by": 3, "kit": false, "end": 7754, "done": true}]
+}
+```
+
+- Change lists use the round clip's frames, as in clip tracks. A value holds while the player is
+  dead, so money and loadout at death stay readable.
+- `gear` lists item names as the game calls them, sorted; a second flashbang appears twice. The
+  bomb is `C4 Explosive`; knives keep their skin's name.
+- `seen` comes from the game's own spotting (`m_bSpottedByMask`): bit `i` is set while
+  `clip.players[i]` has the player in sight. It only covers enemies and is approximate, like the
+  radar in the game.
+- `defuses` lists every attempt in ticks after freeze end, from the start until it was finished
+  (`done`), stopped, or ended by the defuser's death, the explosion or the round end. With a kit
+  a defuse takes 5 s, without 10 s, so `end - t` shows how far a stopped attempt got.
+
 ## Cutting a moment
 
 A moment cut out of a stored round follows the same rules as one cut from the demo: frames from

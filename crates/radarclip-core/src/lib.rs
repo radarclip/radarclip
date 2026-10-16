@@ -40,6 +40,71 @@ pub struct MatchRound {
     /// `MatchPlayer::key` of each of `clip.players`, in the same order.
     pub keys: Vec<String>,
     pub clip: Clip,
+    /// What a replay doesn't have to draw but an analysis or a HUD can use; on the clip's frames.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<Detail>,
+}
+
+/// Per-round detail of a match: loadouts, money, sight and defuse attempts.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Detail {
+    /// Loadouts by index: item names as the game calls them, sorted (a second flashbang is
+    /// listed twice).
+    pub gear: Vec<Vec<String>>,
+    /// One per clip player, same order as `clip.players`.
+    pub players: Vec<PlayerDetail>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub defuses: Vec<Defuse>,
+}
+
+/// Change lists (`[frame, value, frame, value, …]`) on the round clip's frames. Values hold
+/// while the player is dead.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct PlayerDetail {
+    /// Index into `Detail::gear`.
+    pub gear: Vec<i64>,
+    pub money: Vec<i64>,
+    /// Value of what the player carries, as the game counts it.
+    pub equip: Vec<i64>,
+    /// 0 or 1.
+    pub helmet: Vec<i64>,
+    /// Defuse kit, 0 or 1.
+    pub kit: Vec<i64>,
+    /// Bit mask of the clip players who have this player in sight (bit i = `clip.players[i]`),
+    /// from the game's own spotting.
+    pub seen: Vec<i64>,
+}
+
+/// One defuse attempt: from the start until it was finished, stopped, or ended by death, the
+/// explosion or the round end.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Defuse {
+    /// Tick after the round's freeze end, like clip events.
+    pub t: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<u32>,
+    pub kit: bool,
+    pub end: i64,
+    /// The attempt defused the bomb.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub done: bool,
+}
+
+/// A change list from one value per frame: `[frame, value, …]` wherever the value changes;
+/// `None` (no data) keeps the last value.
+pub fn change_list(values: impl IntoIterator<Item = Option<i64>>) -> Vec<i64> {
+    let mut out = vec![];
+    let mut last = None;
+    for (f, v) in values.into_iter().enumerate() {
+        if let Some(v) = v {
+            if last != Some(v) {
+                out.push(f as i64);
+                out.push(v);
+                last = Some(v);
+            }
+        }
+    }
+    out
 }
 
 pub const FORMAT: &str = "radarclip/1";

@@ -23,9 +23,49 @@
           "seconds": {"type": "number", "minimum": 0},
           "winner": {"enum": ["CT", "T", null]},
           "keys": {"type": "array", "items": {"type": "string"}},
-          "clip": {"$ref": "radarclip-1.schema.json"}
+          "clip": {"$ref": "radarclip-1.schema.json"},
+          "detail": {
+            "description": "Loadouts, money, sight and defuse attempts, on the round clip's frames.",
+            "type": "object",
+            "required": ["gear", "players"],
+            "properties": {
+              "gear": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
+              "players": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["gear", "money", "equip", "helmet", "kit", "seen"],
+                  "properties": {
+                    "gear": {"$ref": "#/$defs/changes"},
+                    "money": {"$ref": "#/$defs/changes"},
+                    "equip": {"$ref": "#/$defs/changes"},
+                    "helmet": {"$ref": "#/$defs/changes"},
+                    "kit": {"$ref": "#/$defs/changes"},
+                    "seen": {"$ref": "#/$defs/changes"}
+                  }
+                }
+              },
+              "defuses": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["t", "kit", "end"],
+                  "properties": {
+                    "t": {"type": "integer"},
+                    "by": {"type": "integer", "minimum": 0},
+                    "kit": {"type": "boolean"},
+                    "end": {"type": "integer"},
+                    "done": {"type": "boolean"}
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }
+  },
+  "$defs": {
+    "changes": {"description": "Change list: [frame, value, frame, value, …].", "type": "array", "items": {"type": "integer"}}
   }
 }

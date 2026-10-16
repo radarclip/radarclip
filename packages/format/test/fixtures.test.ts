@@ -73,6 +73,14 @@ describe('radarclip-match/1', () => {
     }
   })
 
+  it('keeps each round\'s detail next to its clip', async () => {
+    const m = await readMatch(text)
+    for (const r of m.rounds) {
+      expect(r.detail?.players.length).toBe(r.clip.players.length)
+      expect(r.detail?.gear.length).toBeGreaterThan(0)
+    }
+  })
+
   it('survives deflate round trip', async () => {
     const m = await readMatch(text)
     const bytes = await writeMatch(m)
