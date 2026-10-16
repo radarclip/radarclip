@@ -290,6 +290,33 @@ fn nade_kind(class: &str) -> Option<&'static str> {
     })
 }
 
+/// A projectile has a row on every tick it exists, so a gap this long means its entity id was
+/// freed and reused by a later grenade.
+const FLIGHT_GAP: i32 = 32;
+
+/// Group projectile rows into flights, each sorted by tick: rows of one entity and kind, split
+/// where the entity id was reused (a gap in ticks or another owner).
+fn flights<'a>(rows: impl Iterator<Item = &'a GrenadeRow>) -> Vec<Vec<&'a GrenadeRow>> {
+    let mut rows: Vec<&GrenadeRow> = rows.collect();
+    rows.sort_by_key(|g| g.tick);
+    let mut flights: Vec<Vec<&GrenadeRow>> = vec![];
+    let mut open: AHashMap<(i32, &str), usize> = AHashMap::default();
+    for g in rows {
+        let at = open.get(&(g.entity, g.kind)).copied().filter(|&f| {
+            let last = flights[f].last().unwrap();
+            g.tick - last.tick <= FLIGHT_GAP && last.owner == g.owner
+        });
+        match at {
+            Some(f) => flights[f].push(g),
+            None => {
+                open.insert((g.entity, g.kind), flights.len());
+                flights.push(vec![g]);
+            }
+        }
+    }
+    flights
+}
+
 fn intern(table: &mut Vec<String>, index: &mut AHashMap<String, u32>, s: &str) -> u32 {
     if let Some(&i) = index.get(s) {
         return i;
@@ -628,16 +655,8 @@ impl Match {
         }
 
         // Grenade flights in the window: ~16 points a second is plenty for a curve.
-        let mut flights: Vec<(i32, Vec<&GrenadeRow>)> = vec![];
-        for g in self.grenades.iter().filter(|g| g.tick >= t0 && g.tick <= t1) {
-            match flights.iter_mut().find(|(e, rows)| *e == g.entity && rows[0].kind == g.kind) {
-                Some((_, rows)) => rows.push(g),
-                None => flights.push((g.entity, vec![g])),
-            }
-        }
         let mut nades = vec![];
-        for (_, mut rows) in flights {
-            rows.sort_by_key(|g| g.tick);
+        for rows in flights(self.grenades.iter().filter(|g| g.tick >= t0 && g.tick <= t1)) {
             let last = rows.len() - 1;
             let mut path = vec![];
             let mut prev = [0i64; 4];
@@ -674,6 +693,44 @@ impl Match {
             nades,
             shots: out_shots,
         }, keys))
+    }
+}
+
+#[cfg(test)]
+mod flight_tests {
+    use super::*;
+
+    fn row(entity: i32, tick: i32, kind: &'static str, owner: &str) -> GrenadeRow {
+        GrenadeRow { entity, tick, kind, owner: Some(owner.to_string()), x: 0.0, y: 0.0, z: 0.0 }
+    }
+
+    /// A reused entity id starts a new flight; it never joins the earlier grenade's.
+    #[test]
+    fn reused_entity_ids_split_flights() {
+        let mut rows = vec![];
+        for t in 100..190 {
+            rows.push(row(341, t, "molotov", "a"));
+            rows.push(row(80, t, "smoke", "a"));
+        }
+        // The same player throws again with the recycled id, and another player after them.
+        for t in 1400..1490 {
+            rows.push(row(341, t, "molotov", "a"));
+        }
+        for t in 1491..1500 {
+            rows.push(row(341, t, "molotov", "b"));
+        }
+        rows.push(row(341, 1500, "he", "b"));
+        let got: Vec<(i32, &str, i32, i32, &str)> = flights(rows.iter())
+            .iter()
+            .map(|f| (f[0].entity, f[0].kind, f[0].tick, f.last().unwrap().tick, f[0].owner.as_deref().unwrap()))
+            .collect();
+        assert_eq!(got, vec![
+            (341, "molotov", 100, 189, "a"),
+            (80, "smoke", 100, 189, "a"),
+            (341, "molotov", 1400, 1489, "a"),
+            (341, "molotov", 1491, 1499, "b"),
+            (341, "he", 1500, 1500, "b"),
+        ]);
     }
 }
 
