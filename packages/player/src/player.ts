@@ -712,13 +712,15 @@ export class RadarclipPlayer {
       g.lineTo(x2, y2)
     }
 
-    // Smokes and fires at their real size, outlined in the thrower's side colour; once grown, a
-    // countdown ring inside the edge shows the time left.
+    // Smokes and fires at their real size, outlined in the thrower's side colour, with a countdown
+    // ring inside the edge for the time left. They grow in easing out (fast, then settling), the
+    // ring growing and fading in with them.
     for (const e of r.events) {
       if ((e.type !== 'smoke' && e.type !== 'molotov') || t < e.t || t > e.until || !this.onFloor(e.z)) continue
       const smoke = e.type === 'smoke'
       const [x, y] = this.px(e.x, e.y)
-      const grow = Math.min(1, (t - e.t) / ((smoke ? 0.8 : 1) * sec))
+      const k = Math.min(1, (t - e.t) / ((smoke ? 0.8 : 1) * sec))
+      const grow = 1 - (1 - k) ** 3
       const fade = Math.min(1, (e.until - t) / (1.5 * sec))
       const rad = ((smoke ? SMOKE_R : FIRE_R) / this.radar.scale) * grow
       circle(x, y, rad)
@@ -729,8 +731,9 @@ export class RadarclipPlayer {
       g.lineWidth = 1.2 * u
       g.strokeStyle = this.color(e.by)
       g.stroke()
-      if (grow >= 1 && rad > 8 * u) {
-        const rr = rad - 3 * u
+      const rr = rad - 3 * u
+      if (rr > 2 * u) {
+        g.globalAlpha = fade * Math.min(1, grow * 1.4)
         circle(x, y, rr)
         g.lineWidth = 2.6 * u
         g.strokeStyle = 'rgba(14,16,20,.55)'
