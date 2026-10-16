@@ -55,6 +55,28 @@ pub struct Detail {
     pub players: Vec<PlayerDetail>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub defuses: Vec<Defuse>,
+    /// Every kill with both players exactly where they were, from the game event.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kills: Vec<Hit>,
+    /// Every hit, the same way.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hits: Vec<Hit>,
+}
+
+/// A kill or hit with the exact positions and view directions of both players at that tick
+/// (clip frames are sampled, so a fast turn just before can fall between two frames).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Hit {
+    /// Tick after the round's freeze end, like clip events.
+    pub t: i64,
+    pub victim: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attacker: Option<u32>,
+    /// Victim: x, y, z (game units), yaw (degrees).
+    pub at: [i64; 4],
+    /// Attacker, the same way; absent for world damage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<[i64; 4]>,
 }
 
 /// Change lists (`[frame, value, frame, value, …]`) on the round clip's frames. Values hold

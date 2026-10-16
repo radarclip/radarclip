@@ -97,6 +97,13 @@ fn match_fixture_detail_fits_its_clips() {
         for x in &d.defuses {
             assert!(x.end >= x.t, "defuse ends before it starts");
         }
+        // One exact kill per kill event, with the victim where the event says.
+        let kills: Vec<_> = r.clip.events.iter().filter_map(|e| match e { radarclip_core::Event::Kill { t, victim, x, y, .. } => Some((*t, *victim, *x, *y)), _ => None }).collect();
+        assert_eq!(d.kills.len(), kills.len(), "round {}", r.number);
+        for (k, (t, victim, x, y)) in d.kills.iter().zip(&kills) {
+            assert_eq!((k.t, k.victim, k.at[0], k.at[1]), (*t, *victim, *x, *y), "round {}", r.number);
+        }
+        assert!(!d.hits.is_empty() && d.hits.iter().all(|h| (h.victim as usize) < n));
     }
 }
 

@@ -7,7 +7,7 @@ use parser::parse_demo::{DemoOutput, Parser, ParsingMode};
 use parser::second_pass::game_events::GameEvent;
 use parser::second_pass::parser_settings::create_huffman_lookup_table;
 use parser::second_pass::variants::{VarVec, Variant};
-use radarclip_core::{change_list, encode_track, Clip, Defuse, Detail, Event, Mark, MatchFile, MatchPlayer, MatchRound, Nade, Player, PlayerDetail, Quant, Sample, Shots, Tolerance, FORMAT, MATCH_FORMAT};
+use radarclip_core::{change_list, encode_track, Clip, Defuse, Detail, Event, Hit, Mark, MatchFile, MatchPlayer, MatchRound, Nade, Player, PlayerDetail, Quant, Sample, Shots, Tolerance, FORMAT, MATCH_FORMAT};
 
 /// Ticks between the player samples kept in memory (16 per second at 64 tick).
 pub const GRID: i32 = 4;
@@ -575,7 +575,25 @@ impl Match {
                 done: stop.is_some_and(|x| x.name == "bomb_defused"),
             });
         }
-        Detail { gear, players, defuses }
+        // Kills and hits with exact positions: the events carry both players' X/Y/Z/yaw.
+        let pose = |e: &GameEvent, who: &str| -> Option<[i64; 4]> {
+            let v = |k: &str| fnum(e, &format!("{who}_{k}")).map(|v| v.round() as i64);
+            Some([v("X")?, v("Y")?, v("Z")?, v("yaw")?])
+        };
+        let by = |e: &GameEvent, who: &str| player_key(fstr(e, &format!("{who}_steamid")), fstr(e, &format!("{who}_name"))).and_then(|key| member_of.get(key.as_str()).map(|&i| i as u32));
+        let window = |e: &&GameEvent| e.tick >= round.freeze_end && e.tick <= round.end + POST_ROUND * self.tickrate as i32;
+        let (mut kills, mut hits) = (vec![], vec![]);
+        for e in self.events.iter().filter(window) {
+            let list = match e.name.as_str() {
+                "player_death" => &mut kills,
+                "player_hurt" => &mut hits,
+                _ => continue,
+            };
+            let (Some(victim), Some(at)) = (by(e, "user"), pose(e, "user")) else { continue };
+            let attacker = by(e, "attacker");
+            list.push(Hit { t: (e.tick - round.freeze_end) as i64, victim, attacker, at, from: attacker.and_then(|_| pose(e, "attacker")) });
+        }
+        Detail { gear, players, defuses, kills, hits }
     }
 
     fn clip_keyed(&self, req: &ClipRequest) -> Result<Keyed, String> {

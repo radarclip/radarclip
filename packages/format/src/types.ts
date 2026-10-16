@@ -130,6 +130,24 @@ export interface Detail {
   /** One per clip player, same order as `clip.players`. */
   players: PlayerDetail[]
   defuses?: Defuse[]
+  /** Every kill with both players exactly where they were. */
+  kills?: Hit[]
+  /** Every hit, the same way. */
+  hits?: Hit[]
+}
+
+/** `[x, y, z, yaw]`: game units and whole degrees. */
+export type Pose = [number, number, number, number]
+
+/** A kill or hit with exact positions; `t` in ticks after the round's freeze end. */
+export interface Hit {
+  t: number
+  victim: number
+  attacker?: number
+  /** The victim. */
+  at: Pose
+  /** The attacker; absent for world damage. */
+  from?: Pose
 }
 
 /** Change lists `[frame, value, …]` on the round clip's frames. */

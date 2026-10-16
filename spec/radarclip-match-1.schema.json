@@ -58,7 +58,9 @@
                     "done": {"type": "boolean"}
                   }
                 }
-              }
+              },
+              "kills": {"type": "array", "items": {"$ref": "#/$defs/hit"}},
+              "hits": {"type": "array", "items": {"$ref": "#/$defs/hit"}}
             }
           }
         }
@@ -66,6 +68,18 @@
     }
   },
   "$defs": {
-    "changes": {"description": "Change list: [frame, value, frame, value, …].", "type": "array", "items": {"type": "integer"}}
+    "changes": {"description": "Change list: [frame, value, frame, value, …].", "type": "array", "items": {"type": "integer"}},
+    "pose": {"description": "x, y, z in game units, yaw in degrees.", "type": "array", "items": {"type": "integer"}, "minItems": 4, "maxItems": 4},
+    "hit": {
+      "type": "object",
+      "required": ["t", "victim", "at"],
+      "properties": {
+        "t": {"type": "integer"},
+        "victim": {"type": "integer", "minimum": 0},
+        "attacker": {"type": "integer", "minimum": 0},
+        "at": {"$ref": "#/$defs/pose"},
+        "from": {"$ref": "#/$defs/pose"}
+      }
+    }
   }
 }

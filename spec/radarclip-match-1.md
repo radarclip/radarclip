@@ -55,7 +55,9 @@ use. It lives next to the clip, not in it, so moments cut from a round stay as s
      "kit":    [0, 0],               // change list: defuse kit, 0 or 1
      "seen":   [0, 0, 236, 96, 250, 0]}  // change list: bit mask of clip players who see them
   ],
-  "defuses": [{"t": 7114, "by": 3, "kit": false, "end": 7754, "done": true}]
+  "defuses": [{"t": 7114, "by": 3, "kit": false, "end": 7754, "done": true}],
+  "kills": [{"t": 2693, "victim": 7, "attacker": 2, "at": [733, 107, 1612, -170], "from": [-496, 27, 1664, 4]}],
+  "hits":  [{"t": 2481, "victim": 7, "attacker": 2, "at": [765, 180, 1612, -173], "from": [-512, 36, 1664, 6]}]
 }
 ```
 
@@ -69,6 +71,10 @@ use. It lives next to the clip, not in it, so moments cut from a round stay as s
 - `defuses` lists every attempt in ticks after freeze end, from the start until it was finished
   (`done`), stopped, or ended by the defuser's death, the explosion or the round end. With a kit
   a defuse takes 5 s, without 10 s, so `end - t` shows how far a stopped attempt got.
+- `kills` and `hits` repeat every kill and hit with both players exactly where they were at that
+  tick, from the game event: `at` is the victim's `[x, y, z, yaw]`, `from` the attacker's (absent
+  for world damage), in game units and whole degrees. Clip frames are sampled every few ticks,
+  so a fast turn just before a hit can fall between two frames; these values don't.
 
 ## Cutting a moment
 
