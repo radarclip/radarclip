@@ -9,3 +9,5 @@ crates/radarclip-wasm/pkg/
 packages/*/dist/
 packages/player/www/radars/
 apps/*/dist/
+# Declarations belong in dist/; a stray tsc run once left stale copies next to the sources
+packages/*/src/**/*.d.ts
