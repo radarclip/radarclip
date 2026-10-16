@@ -3,8 +3,33 @@
 Compact top-down replay clips of Counter-Strike 2 moments.
 
 A demo is 200–350 MB and needs a full viewer. A radarclip holds only what a 2D view needs
-(players, utility, shots, kills, bomb) for the seconds that matter: a 20 s clip is ~2 KB
-compressed, a whole round ~8 KB. Small enough to keep, embed in a page, or send to your team.
+(players, utility, shots, kills, bomb) for the seconds that matter: a 20 s clip is ~3–4 KB,
+a whole round ~10 KB, a whole match ~200 KB. Small enough to keep, embed in a page, or send to
+your team.
+
+| What | Size |
+| --- | --- |
+| CS2 demo of one match (`.dem`) | 200–340 MB |
+| Whole match, every round (`.radarclip-match`) | 170–265 KB |
+| One round (`.radarclip`) | 6–16 KB |
+| A 20 s moment (`.radarclip`) | 3–4.5 KB |
+
+Measured on eight 5v5 competitive matches (17–29 rounds, 64 tick), default settings (8 frames a
+second), files as written by `radarclip match` and `radarclip clip`. A match file is about
+1/1200 of its demo:
+
+| Map | Rounds | Demo | Match | Demo ÷ match |
+| --- | ---: | ---: | ---: | ---: |
+| Nuke | 24 | 293.0 MB | 248.5 KB | 1179× |
+| Inferno | 23 | 294.4 MB | 208.4 KB | 1413× |
+| Cache | 29 | 342.2 MB | 265.0 KB | 1292× |
+| Cache | 24 | 254.0 MB | 222.0 KB | 1144× |
+| Anubis | 19 | 223.3 MB | 167.2 KB | 1336× |
+| Mirage | 18 | 211.0 MB | 188.8 KB | 1118× |
+| Ancient | 19 | 210.9 MB | 179.7 KB | 1174× |
+| Mirage | 17 | 199.3 MB | 180.7 KB | 1103× |
+
+For comparison, `gzip -9` gets the 293 MB Nuke demo only down to 203 MB.
 
 - **Format:** [`spec/radarclip-1.md`](spec/radarclip-1.md), JSON Schema and reference clips in [`spec/`](spec).
 - **Rust:** `radarclip-core` (format, encoder, decoder), `radarclip-parser` (CS2 demo → clips, on
