@@ -58,6 +58,11 @@ For comparison, `gzip -9` gets the 293 MB Nuke demo only down to 203 MB.
 Or drive a canvas yourself: `const p = new RadarclipPlayer(canvas, { radar }); await p.load(clip);
 p.play(); p.seek(59.7); p.on('time', …); await p.toBlob()`. Without a radar it draws on a plain
 background. Colours via `--radarclip-ct`, `-t`, `-me`, `-bg`, `-fg`, `-muted`.
+
+Kill-feed icons are the game's own, loaded from jsDelivr. To serve them yourself, copy
+counter-strike-icons' `cs2/panorama/images/` (`icons/equipment/`, `hud/deathnotice/`) and set
+`RadarclipPlayer.iconResolver = gameIcons('https://your.host/cs2-icons/')`; `false` draws
+names and radarclip's own symbols instead.
 The kill feed shows the game's own weapon and kill icons, loaded at runtime from the
 [counter-strike-icons](https://github.com/Juknum/counter-strike-icons) project's copies of the game
 files (Valve's artwork, not part of this repo); pass `icon: (name) => url` to host them yourself, or

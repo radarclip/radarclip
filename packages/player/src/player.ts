@@ -32,7 +32,8 @@ export interface PlayerOptions {
    * URL of a kill-feed icon, or `false` for weapon names and radarclip's own drawn symbols.
    * `name` is a weapon as the game names it (`ak47`, `flashbang_assist`) or a kill symbol
    * (`headshot`, `wallbang`, `noscope`, `smoke`, `blind`). Default: the game's own icons via
-   * the counter-strike-icons project on jsDelivr; nothing of Valve's ships with radarclip.
+   * the counter-strike-icons project on jsDelivr (or `RadarclipPlayer.iconResolver`); nothing of
+   * Valve's ships with radarclip.
    * An icon that fails to load falls back to the name or the drawn symbol.
    */
   icon?: ((name: string) => string | undefined) | false
@@ -40,13 +41,22 @@ export interface PlayerOptions {
 
 const GAME_ICONS = 'https://cdn.jsdelivr.net/gh/Juknum/counter-strike-icons@899560e1a023fcbd1a090fa4fcbf1119a68145f2/cs2/panorama/images/'
 const KILL_ICON: Record<string, string> = { headshot: 'icon_headshot', wallbang: 'penetrate', noscope: 'noscope', smoke: 'smoke_kill', blind: 'blind_kill' }
-/** Default kill-feed icons: the game's own files (weapons and death-notice symbols). */
-export const gameIcon = (name: string) => {
-  if (KILL_ICON[name]) return `${GAME_ICONS}hud/deathnotice/${KILL_ICON[name]}.svg`
-  if (name === 'world' || !name) return undefined
-  const file = name === 'knifegg' || (/^(knife|bayonet)/.test(name) && !name.startsWith('knife_')) ? 'knife' : name
-  return `${GAME_ICONS}icons/equipment/${file}.svg`
+/**
+ * Kill-feed icons from the game's own files (weapons and death-notice symbols), laid out under
+ * `base` as in counter-strike-icons' `cs2/panorama/images/`: `icons/equipment/<weapon>.svg`,
+ * `hud/deathnotice/<symbol>.svg`.
+ */
+export const gameIcons = (base = GAME_ICONS) => {
+  const b = base.endsWith('/') ? base : `${base}/`
+  return (name: string) => {
+    if (KILL_ICON[name]) return `${b}hud/deathnotice/${KILL_ICON[name]}.svg`
+    if (name === 'world' || !name) return undefined
+    const file = name === 'knifegg' || (/^(knife|bayonet)/.test(name) && !name.startsWith('knife_')) ? 'knife' : name
+    return `${b}icons/equipment/${file}.svg`
+  }
 }
+/** Default kill-feed icons: the game's own files via jsDelivr. */
+export const gameIcon = gameIcons()
 
 /** Fallback kill symbols drawn for radarclip (1.5px outline on a 20px grid) when the game's icons don't load. */
 const SYMBOL: Record<'headshot' | 'wallbang' | 'noscope' | 'smoke' | 'blind', { d: string; fill?: string; heavy?: string }> = {
@@ -129,6 +139,7 @@ const clock = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.f
 /** Radars registered by map name (e.g. by a page that hosts them). */
 const registry = new Map<string, Radar>()
 let resolver: ((map: string) => Radar | undefined | Promise<Radar | undefined>) | undefined
+let iconSource: PlayerOptions['icon']
 
 /** Hits on one victim less than DMG_GAP apart, shown as one running total. */
 interface DamageGroup {
@@ -162,6 +173,14 @@ export class RadarclipPlayer {
   /** Fallback for maps not registered, e.g. `RadarclipPlayer.radarResolver = radars()` from @radarclip/radars. */
   static set radarResolver(fn: ((map: string) => Radar | undefined | Promise<Radar | undefined>) | undefined) {
     resolver = fn
+  }
+
+  /**
+   * Kill-feed icons for every player that sets no `icon` option (same values as `icon`), e.g.
+   * the game's icons from your own host: `RadarclipPlayer.iconResolver = gameIcons('/cs2-icons/')`.
+   */
+  static set iconResolver(fn: PlayerOptions['icon']) {
+    iconSource = fn
   }
 
   readonly canvas: HTMLCanvasElement
@@ -292,7 +311,8 @@ export class RadarclipPlayer {
   /** A kill-feed icon once loaded; starts the download on first use and redraws when it lands. */
   private icon(weapon: string): HTMLImageElement | null {
     if (this.icons.has(weapon)) return this.icons.get(weapon) ?? null
-    const src = this.opts.icon === false ? undefined : (this.opts.icon ?? gameIcon)(weapon)
+    const source = this.opts.icon !== undefined ? this.opts.icon : (iconSource ?? gameIcon)
+    const src = source === false ? undefined : source(weapon)
     this.icons.set(weapon, null)
     if (!src || typeof Image === 'undefined' || typeof fetch === 'undefined') return null
     // The icons carry only a viewBox, which leaves an <img> without a size: read the SVG, give
