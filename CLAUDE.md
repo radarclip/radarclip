@@ -62,8 +62,9 @@ override rewrites.
 - GitButler (`but`) for every write; one branch and PR per change. Stacked PRs merge bottom-up
   only through `gh api -X PUT repos/radarclip/radarclip/pulls/<n>/merge-async -f
   merge_method=merge -f merge_action=direct_merge`; retry when a base change cancels it.
-- After `but pull`, check that `git log HEAD` sits on `origin/main`: once it silently kept the
-  workspace on an older base.
+- After `but pull`, check that `git log HEAD` sits on `origin/main`. With no branch applied it
+  keeps the workspace on the old base (status already shows the new one); create the next
+  branch, then `but pull` again.
 - PRs that change the public API (package exports and options, Rust and wasm interfaces, the
   CLI, the spec) wait for the owner's review. Others are merged once the owner has tested them.
 
