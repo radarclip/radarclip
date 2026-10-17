@@ -90,6 +90,7 @@ export function check(value: unknown): Clip {
     const ev = e as Record<string, unknown>
     if (!isPlayer(ev.attacker) || !isPlayer(ev.victim) || !isPlayer(ev.by)) fail(`${String(ev.type)} event at ${String(ev.t)}: unknown player`)
   }
+  if (c.frame !== undefined && (!Array.isArray(c.frame) || c.frame.some((a) => !a || ![a.x, a.y, a.r].every(Number.isFinite) || a.r < 0))) fail('frame must list areas {x, y, r}')
   const s = c.shots
   if (!s || s.t.length !== s.p.length || s.t.length !== s.yaw.length) fail('shots arrays differ in length')
   return c

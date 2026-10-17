@@ -654,7 +654,10 @@ export class RadarclipPlayer {
     return this._floor === 'lower' ? z < this.split : z >= this.split
   }
 
-  /** Square box around the focus players and everyone they traded damage with, in radar px. */
+  /**
+   * Square box around the focus players, everyone they traded damage with and the clip's frame
+   * areas, in radar px.
+   */
   private computeFit(): [number, number, number] {
     const r = this.replay
     const c = r.clip
@@ -677,6 +680,10 @@ export class RadarclipPlayer {
       for (let f = 0; f < r.frames; f++) if (p.alive[f]) add(p.x[f], p.y[f])
     }
     for (const k of this.kills) if (ids.has(k.victim) && k.t >= r.start) add(k.x, k.y)
+    for (const a of c.frame ?? []) {
+      add(a.x - a.r, a.y - a.r)
+      add(a.x + a.r, a.y + a.r)
+    }
     if (!isFinite(x0)) return [0, 0, 1024]
     const size = Math.min(1024, Math.max(380, Math.max(x1 - x0, y1 - y0) + 180))
     return [(x0 + x1) / 2 - size / 2, (y0 + y1) / 2 - size / 2, size]

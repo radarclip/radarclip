@@ -61,6 +61,13 @@ it('rejects other major versions', async () => {
   await expect(readClip('{"format":"radarclip/2"}')).rejects.toThrow(/newer reader/)
 })
 
+it('reads frame areas and rejects broken ones', async () => {
+  const clip = JSON.parse(readFileSync(join(dir, fixtures[0]), 'utf8'))
+  const frame = [{ x: -400, y: -1200, r: 1700 }]
+  expect((await readClip(JSON.stringify({ ...clip, frame }))).frame).toEqual(frame)
+  await expect(readClip(JSON.stringify({ ...clip, frame: [{ x: 0, y: 0 }] }))).rejects.toThrow(/frame/)
+})
+
 describe('radarclip-match/1', () => {
   const text = readFileSync(join(dir, 'nuke-r1-2.radarclip-match.json'), 'utf8')
 

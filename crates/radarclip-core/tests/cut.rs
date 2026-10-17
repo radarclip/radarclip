@@ -1,7 +1,7 @@
 //! Cutting a moment out of a stored full round must give what cutting from the demo gives:
 //! the same positions (within a unit), the same window rules for events.
 
-use radarclip_core::{cut, decode_track, Clip, Cut, Event};
+use radarclip_core::{cut, decode_track, Area, Clip, Cut, Event};
 
 fn nuke() -> Clip {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../spec/fixtures/nuke-r2-full.radarclip.json");
@@ -68,6 +68,18 @@ fn renames_and_focuses_like_the_parser() {
     assert_eq!(names, ["CT 1", "CT 2", "CT 3", "CT 4", "CT 5", "T 1", "T 2", "T 3", "T 4", "T 5"]);
     assert!(cut(&round, &Cut { from: 0, to: 640, focus: vec![10], ..Default::default() }).is_err());
     assert!(cut(&round, &Cut { from: 50_000, to: 60_000, ..Default::default() }).is_err());
+}
+
+#[test]
+fn keeps_frame_areas_and_leaves_them_out_when_empty() {
+    let round = nuke();
+    let frame = vec![Area { x: -400, y: -1200, r: 1700 }];
+    let part = cut(&round, &Cut { from: 0, to: 640, frame: frame.clone(), ..Default::default() }).unwrap();
+    assert_eq!(part.frame, frame);
+    let json = serde_json::to_value(&part).unwrap();
+    assert_eq!(json["frame"], serde_json::json!([{"x": -400, "y": -1200, "r": 1700}]));
+    let plain = cut(&round, &Cut { from: 0, to: 640, ..Default::default() }).unwrap();
+    assert!(serde_json::to_value(&plain).unwrap().get("frame").is_none());
 }
 
 #[test]
