@@ -70,7 +70,8 @@ use. It lives next to the clip, not in it, so moments cut from a round stay as s
   radar in the game.
 - `defuses` lists every attempt in ticks after freeze end, from the start until it was finished
   (`done`), stopped, or ended by the defuser's death, the explosion or the round end. With a kit
-  a defuse takes 5 s, without 10 s, so `end - t` shows how far a stopped attempt got.
+  a defuse takes 5 s, without 10 s, so `end - t` shows how far a stopped attempt got. The round's
+  clip carries the same attempts as `defusing` events, so a moment cut from it keeps them.
 - `kills` and `hits` repeat every kill and hit with both players exactly where they were at that
   tick, from the game event: `at` is the victim's `[x, y, z, yaw]`, `from` the attacker's (absent
   for world damage), in game units and whole degrees. Clip frames are sampled every few ticks,
@@ -79,8 +80,8 @@ use. It lives next to the clip, not in it, so moments cut from a round stay as s
 ## Cutting a moment
 
 A moment cut out of a stored round follows the same rules as one cut from the demo: frames from
-the first at or after the start; kills, a plant and smokes or fires still burning from earlier in
-the round stay; hurts, blinds, pops, shots and grenade flights only inside the window. Tracks are
+the first at or after the start; kills, a plant, smokes or fires still burning, plant and defuse
+attempts still running and the last bomb pickup or drop from earlier in the round stay; hurts, blinds, pops, shots and grenade flights only inside the window. Tracks are
 re-encoded from the decoded frames with a 1-unit / 1° tolerance, so positions stay within a unit
 of the stored round. The reference implementation is `radarclip_core::cut`, in the browser
 `cutClip()` from `radarclip-wasm`.

@@ -260,6 +260,34 @@ pub enum Event {
     Plant { t: i64, #[serde(default, skip_serializing_if = "Option::is_none")] by: Option<u32>, x: i64, y: i64, z: i64 },
     Defuse { t: i64, #[serde(default, skip_serializing_if = "Option::is_none")] by: Option<u32> },
     Explode { t: i64, #[serde(default, skip_serializing_if = "Option::is_none")] by: Option<u32> },
+    /// A defuse attempt from its start until it was finished, stopped, or ended by the
+    /// defuser's death, the explosion or the round end.
+    Defusing {
+        t: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<u32>,
+        until: i64,
+        /// The defuser had a kit (5 s instead of 10 s).
+        #[serde(default, skip_serializing_if = "is_false")]
+        kit: bool,
+        /// The attempt defused the bomb.
+        #[serde(default, skip_serializing_if = "is_false")]
+        done: bool,
+    },
+    /// A plant attempt from its start until the bomb was planted, or the planter let go or died.
+    Planting {
+        t: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<u32>,
+        until: i64,
+        /// The attempt planted the bomb.
+        #[serde(default, skip_serializing_if = "is_false")]
+        done: bool,
+    },
+    /// A player picked up the bomb (also when it is handed out at round start).
+    Pickup { t: i64, #[serde(default, skip_serializing_if = "Option::is_none")] by: Option<u32> },
+    /// A player dropped the bomb; x/y/z is where it lies.
+    Drop { t: i64, #[serde(default, skip_serializing_if = "Option::is_none")] by: Option<u32>, x: i64, y: i64, z: i64 },
 }
 
 fn is_false(v: &bool) -> bool {
@@ -275,7 +303,8 @@ impl Event {
         match self {
             Event::Kill { t, .. } | Event::Hurt { t, .. } | Event::Blind { t, .. } | Event::Smoke { t, .. }
             | Event::Molotov { t, .. } | Event::Flash { t, .. } | Event::He { t, .. } | Event::Plant { t, .. }
-            | Event::Defuse { t, .. } | Event::Explode { t, .. } => *t,
+            | Event::Defuse { t, .. } | Event::Explode { t, .. } | Event::Defusing { t, .. } | Event::Planting { t, .. }
+            | Event::Pickup { t, .. } | Event::Drop { t, .. } => *t,
         }
     }
 }
@@ -551,5 +580,29 @@ mod tests {
     fn events_serialise_with_type_tag() {
         let e = Event::Defuse { t: 10, by: None };
         assert_eq!(serde_json::to_string(&e).unwrap(), r#"{"type":"defuse","t":10}"#);
+    }
+
+    #[test]
+    fn defusing_leaves_out_what_does_not_apply() {
+        let e = Event::Defusing { t: 10, by: Some(2), until: 90, kit: false, done: false };
+        let json = serde_json::to_string(&e).unwrap();
+        assert_eq!(json, r#"{"type":"defusing","t":10,"by":2,"until":90}"#);
+        assert_eq!(serde_json::from_str::<Event>(&json).unwrap(), e);
+        let done = Event::Defusing { t: 10, by: None, until: 330, kit: true, done: true };
+        assert_eq!(serde_json::to_string(&done).unwrap(), r#"{"type":"defusing","t":10,"until":330,"kit":true,"done":true}"#);
+    }
+
+    #[test]
+    fn bomb_events_serialise() {
+        let plant = Event::Planting { t: 10, by: Some(1), until: 210, done: true };
+        assert_eq!(serde_json::to_string(&plant).unwrap(), r#"{"type":"planting","t":10,"by":1,"until":210,"done":true}"#);
+        let fake = Event::Planting { t: 10, by: Some(1), until: 70, done: false };
+        assert_eq!(serde_json::to_string(&fake).unwrap(), r#"{"type":"planting","t":10,"by":1,"until":70}"#);
+        assert_eq!(serde_json::to_string(&Event::Pickup { t: -5, by: Some(2) }).unwrap(), r#"{"type":"pickup","t":-5,"by":2}"#);
+        let drop = Event::Drop { t: 40, by: Some(2), x: 1, y: 2, z: 3 };
+        assert_eq!(serde_json::to_string(&drop).unwrap(), r#"{"type":"drop","t":40,"by":2,"x":1,"y":2,"z":3}"#);
+        for e in [plant, fake, drop] {
+            assert_eq!(serde_json::from_str::<Event>(&serde_json::to_string(&e).unwrap()).unwrap(), e);
+        }
     }
 }

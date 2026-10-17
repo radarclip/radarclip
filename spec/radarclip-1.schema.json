@@ -124,13 +124,17 @@
         "pen": {"type": "integer", "minimum": 0},
         "noscope": {"type": "boolean"},
         "smoke": {"type": "boolean"},
-        "blind": {"type": "boolean"}
+        "blind": {"type": "boolean"},
+        "kit": {"type": "boolean"},
+        "done": {"type": "boolean"}
       },
       "allOf": [
         {"if": {"properties": {"type": {"const": "kill"}}}, "then": {"$ref": "#/$defs/pos", "required": ["victim", "weapon", "hs"]}},
         {"if": {"properties": {"type": {"const": "hurt"}}}, "then": {"required": ["victim", "dmg", "weapon"]}},
         {"if": {"properties": {"type": {"const": "blind"}}}, "then": {"required": ["victim", "until"]}},
         {"if": {"properties": {"type": {"enum": ["smoke", "molotov"]}}}, "then": {"$ref": "#/$defs/pos", "required": ["until"]}},
+        {"if": {"properties": {"type": {"enum": ["defusing", "planting"]}}}, "then": {"required": ["until"]}},
+        {"if": {"properties": {"type": {"const": "drop"}}}, "then": {"$ref": "#/$defs/pos"}},
         {"if": {"properties": {"type": {"enum": ["flash", "he", "plant"]}}}, "then": {"$ref": "#/$defs/pos"}}
       ]
     }

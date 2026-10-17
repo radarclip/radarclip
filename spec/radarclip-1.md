@@ -105,14 +105,35 @@ world damage, a player not in the clip).
 | `flash`, `he` | `by`, `x`, `y`, `z` |
 | `plant` | `by`, `x`, `y`, `z` |
 | `defuse`, `explode` | `by` |
+| `defusing` | `by`, `until`; optional `kit`, `done` (see below) |
+| `planting` | `by`, `until`; optional `done` (see below) |
+| `pickup` | `by` |
+| `drop` | `by`, `x`, `y`, `z` (where the bomb lies) |
 
 Optional kill fields, left out when they don't apply: `assister` (the player credited with the
 assist), `flashassist` (true: the assist was a flash), `pen` (surfaces the bullet went through;
 above 0 is a wallbang), `noscope`, `smoke` (shot through a smoke) and `blind` (the attacker was
 blind). Readers treat a missing field as no assist, 0, or false.
 
+`defusing` is one defuse attempt, from its start (`t`) until it was finished, stopped, or ended
+by the defuser's death, the explosion or the round end (`until`). `kit` is true when the defuser
+had a kit: a defuse takes 5 s with one, 10 s without, so `until - t` shows how far a stopped
+attempt got. `done` is true when the attempt defused the bomb (a `defuse` event follows at
+`until`). Both are left out when false. The game keeps no progress: every attempt starts from
+zero.
+
+`planting` is one plant attempt the same way: from its start until the bomb was planted (`done`,
+a `plant` event follows at `until`) or the planter let go, switched weapon or died. A plant takes
+3.125 s. The game sends no event when a plant is given up; the reference parser ends the attempt
+at the first sample where the planter's C4 no longer arms.
+
+`pickup` and `drop` say who has the bomb. The bomb is handed out in freeze time, so that pickup
+comes before the round's freeze end (a negative `t`). A drop's `x`, `y`, `z` is where the bomb
+lies: the reference parser takes the position of the next pickup, else where the dropper stood.
+
 Kills from earlier in the round are included so the map can show them. Smokes and fires still
-burning and a bomb planted before the clip starts are included too.
+burning, plant and defuse attempts still running, a bomb planted before the clip starts and the
+last `pickup` or `drop` before it (so the clip knows where the bomb is) are included too.
 
 ## Nades
 

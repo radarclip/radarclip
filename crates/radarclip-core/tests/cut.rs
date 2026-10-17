@@ -42,7 +42,10 @@ fn keeps_earlier_kills_and_burning_smokes_but_only_window_hits() {
     for e in &part.events {
         match e {
             Event::Kill { t, .. } | Event::Plant { t, .. } => assert!(*t <= to),
-            Event::Smoke { t, until, .. } | Event::Molotov { t, until, .. } => assert!(*t <= to && *until >= from),
+            Event::Smoke { t, until, .. } | Event::Molotov { t, until, .. } | Event::Defusing { t, until, .. } | Event::Planting { t, until, .. } => {
+                assert!(*t <= to && *until >= from)
+            }
+            Event::Pickup { .. } | Event::Drop { .. } => {}
             e => assert!((from..=to).contains(&e.t()), "{e:?} outside the window"),
         }
     }
@@ -76,4 +79,42 @@ fn whole_round_cut_is_the_round() {
     assert_eq!(again.events, round.events);
     assert_eq!(again.nades, round.nades);
     assert_eq!(again.shots, round.shots);
+}
+
+#[test]
+fn keeps_a_defuse_attempt_while_it_runs() {
+    let round = nuke();
+    let attempt = round.events.iter().find(|e| matches!(e, Event::Defusing { .. })).expect("Nuke R2 has a defuse").clone();
+    let Event::Defusing { t, until, .. } = attempt else { unreachable!() };
+    let has = |from, to| cut(&round, &Cut { from, to, ..Default::default() }).unwrap().events.contains(&attempt);
+    assert!(has(t + 64, until - 64), "an attempt started before the window stays");
+    assert!(has(until - 64, until + 640));
+    assert!(!has(t - 640, t - 64), "not before it starts");
+    assert!(!has(until + 64, until + 640), "not after it ended");
+}
+
+#[test]
+fn keeps_who_has_the_bomb() {
+    let round = nuke();
+    let carry = |c: &Clip| c.events.iter().filter(|e| matches!(e, Event::Pickup { .. } | Event::Drop { .. })).cloned().collect::<Vec<_>>();
+    let all = carry(&round);
+    assert!(!all.is_empty() && all[0].t() < 0, "the bomb is handed out in freeze time");
+    for from in [0, 10 * 64, 40 * 64] {
+        let part = carry(&cut(&round, &Cut { from, to: from + 640, ..Default::default() }).unwrap());
+        let before: Vec<_> = part.iter().filter(|e| e.t() < from).collect();
+        assert_eq!(before.len(), 1, "exactly the last pickup or drop before {from}");
+        assert_eq!(Some(before[0]), all.iter().filter(|e| e.t() < from).last());
+        assert!(part.iter().all(|e| e.t() < from || e.t() <= from + 640));
+    }
+}
+
+#[test]
+fn keeps_a_plant_attempt_while_it_runs() {
+    let round = nuke();
+    let attempt = round.events.iter().find(|e| matches!(e, Event::Planting { .. })).expect("Nuke R2 has a plant").clone();
+    let Event::Planting { t, until, done, .. } = attempt else { unreachable!() };
+    assert!(done && until - t == 200, "a plant takes 3.125 s");
+    let has = |from, to| cut(&round, &Cut { from, to, ..Default::default() }).unwrap().events.contains(&attempt);
+    assert!(has(t + 64, t + 128));
+    assert!(!has(until + 64, until + 640));
 }
