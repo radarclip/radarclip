@@ -41,6 +41,8 @@ importers:
 
   packages/format: {}
 
+  packages/nav: {}
+
   packages/player:
     dependencies:
       '@radarclip/format':

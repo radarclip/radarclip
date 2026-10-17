@@ -15,3 +15,7 @@ TypeScript packages (pnpm workspace):
   map with a radar, and image URLs. Images are Valve's and are not shipped: they load at runtime
   from a configurable base (default: MurkyYT/cs2-map-icons, which extracts them from the game).
   `pnpm --filter @radarclip/radars update` refreshes the numbers.
+- `nav` — `@radarclip/nav`: navigation meshes. Reads a map's `.nav` file, finds the area under a
+  point, walking routes and distances (ladders, jumps and drops included), and names areas after
+  the callouts players had on them in demos. The `.nav` files are Valve's and are not shipped;
+  awpy-data publishes them per game version.
