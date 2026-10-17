@@ -69,3 +69,47 @@ fn match_fixture_loads_and_roundtrips() {
     let again: MatchFile = serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
     assert_eq!(m, again);
 }
+
+/// Every round of the reference match has detail that fits its clip: one entry per clip player,
+/// change lists in frame order inside the clip, gear indices in range, sight masks over the clip's
+/// players, defuse attempts that end after they start.
+#[test]
+fn match_fixture_detail_fits_its_clips() {
+    use radarclip_core::MatchFile;
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../spec/fixtures/nuke-r1-2.radarclip-match.json");
+    let m: MatchFile = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    for r in &m.rounds {
+        let d = r.detail.as_ref().unwrap_or_else(|| panic!("round {} has no detail", r.number));
+        let n = r.clip.players.len();
+        assert_eq!(d.players.len(), n, "round {}", r.number);
+        for p in &d.players {
+            for (name, list) in [("gear", &p.gear), ("money", &p.money), ("equip", &p.equip), ("helmet", &p.helmet), ("kit", &p.kit), ("seen", &p.seen)] {
+                assert_eq!(list.len() % 2, 0, "round {} {name}: odd change list", r.number);
+                let frames: Vec<i64> = list.chunks(2).map(|c| c[0]).collect();
+                assert!(frames.windows(2).all(|w| w[0] < w[1]), "round {} {name}: frames out of order", r.number);
+                assert!(frames.iter().all(|&f| f >= 0 && f < r.clip.frames as i64), "round {} {name}: frame outside the clip", r.number);
+            }
+            assert!(p.gear.chunks(2).all(|c| (c[1] as usize) < d.gear.len()), "round {}: gear index out of range", r.number);
+            assert!(p.seen.chunks(2).all(|c| c[1] >= 0 && c[1] < 1 << n), "round {}: sight mask beyond the clip players", r.number);
+            assert!(p.money.chunks(2).any(|c| c[1] > 0), "round {}: no money", r.number);
+        }
+        assert!(d.gear.iter().all(|g| g.windows(2).all(|w| w[0] <= w[1])), "loadouts are sorted");
+        for x in &d.defuses {
+            assert!(x.end >= x.t, "defuse ends before it starts");
+        }
+        // One exact kill per kill event, with the victim where the event says.
+        let kills: Vec<_> = r.clip.events.iter().filter_map(|e| match e { radarclip_core::Event::Kill { t, victim, x, y, .. } => Some((*t, *victim, *x, *y)), _ => None }).collect();
+        assert_eq!(d.kills.len(), kills.len(), "round {}", r.number);
+        for (k, (t, victim, x, y)) in d.kills.iter().zip(&kills) {
+            assert_eq!((k.t, k.victim, k.at[0], k.at[1]), (*t, *victim, *x, *y), "round {}", r.number);
+        }
+        assert!(!d.hits.is_empty() && d.hits.iter().all(|h| (h.victim as usize) < n));
+    }
+}
+
+#[test]
+fn change_lists_keep_the_last_value_over_gaps() {
+    use radarclip_core::change_list;
+    assert_eq!(change_list([Some(800), Some(800), None, Some(800), Some(200), None]), vec![0, 800, 4, 200]);
+    assert!(change_list([None, None]).is_empty());
+}

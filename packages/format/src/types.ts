@@ -119,4 +119,58 @@ export interface MatchRound {
   keys: string[]
   /** The full round. */
   clip: Clip
+  /** Loadouts, money, sight and defuse attempts, on the clip's frames. */
+  detail?: Detail
+}
+
+/** Per-round detail of a match (see spec/radarclip-match-1.md). */
+export interface Detail {
+  /** Loadouts by index: item names as the game calls them, sorted. */
+  gear: string[][]
+  /** One per clip player, same order as `clip.players`. */
+  players: PlayerDetail[]
+  defuses?: Defuse[]
+  /** Every kill with both players exactly where they were. */
+  kills?: Hit[]
+  /** Every hit, the same way. */
+  hits?: Hit[]
+}
+
+/** `[x, y, z, yaw]`: game units and whole degrees. */
+export type Pose = [number, number, number, number]
+
+/** A kill or hit with exact positions; `t` in ticks after the round's freeze end. */
+export interface Hit {
+  t: number
+  victim: number
+  attacker?: number
+  /** The victim. */
+  at: Pose
+  /** The attacker; absent for world damage. */
+  from?: Pose
+}
+
+/** Change lists `[frame, value, …]` on the round clip's frames. */
+export interface PlayerDetail {
+  /** Index into `Detail.gear`. */
+  gear: number[]
+  money: number[]
+  /** Value of what the player carries. */
+  equip: number[]
+  /** 0 or 1. */
+  helmet: number[]
+  /** Defuse kit, 0 or 1. */
+  kit: number[]
+  /** Bit mask of the clip players who have this player in sight (bit i = `clip.players[i]`). */
+  seen: number[]
+}
+
+/** One defuse attempt; `t` and `end` in ticks after the round's freeze end. */
+export interface Defuse {
+  t: number
+  by?: number
+  kit: boolean
+  end: number
+  /** The attempt defused the bomb. */
+  done?: boolean
 }
