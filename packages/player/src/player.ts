@@ -691,7 +691,7 @@ export class RadarclipPlayer {
     return side === 'CT' ? this.theme.ct : side === 'T' ? this.theme.t : '#dddddd'
   }
 
-  /** A player's side colour, also for the focus player (the kill feed keeps sides). */
+  /** A player's side colour, also for the focus player (their dot and the kill feed keep sides). */
   private sideColor(player: number) {
     const side = this.replay.players[player]?.side
     return side === 'CT' ? this.theme.ct : side === 'T' ? this.theme.t : this.theme.muted
@@ -1022,8 +1022,9 @@ export class RadarclipPlayer {
       const st = stateAt(r, p.index, t)
       // A canvas gradient throws on a non-finite position; never let one player blank the frame.
       if (!st || dead.has(p.index) || !Number.isFinite(st.x) || !Number.isFinite(st.y)) continue
-      const col = this.color(p.index)
       const mine = p.index === focus[0]
+      // The focus player keeps the side colour (which team am I on?); a focus mark tells them apart.
+      const col = mine ? this.sideColor(p.index) : this.color(p.index)
       const [x, y] = this.px(st.x, st.y)
       if (!this.onFloor(st.z)) {
         bodies.push(() => {
@@ -1072,6 +1073,16 @@ export class RadarclipPlayer {
         g.fill()
       })
       bodies.push(() => {
+        if (mine) {
+          // The focus mark: a soft focus-coloured halo with a thin rim, under the blind and HP rings.
+          const hr = R + 6.5 * u
+          circle(x, y, hr)
+          g.fillStyle = withAlpha(th.me, 0.28)
+          g.fill()
+          g.lineWidth = 1.4 * u
+          g.strokeStyle = th.me
+          g.stroke()
+        }
         if (blind) {
           const left = 1 - (t - blind.t) / Math.max(1, blind.until - blind.t)
           circle(x, y, R + 5 * u)
@@ -1107,11 +1118,12 @@ export class RadarclipPlayer {
       let dz = ''
       if (!mine && me && Math.abs(st.z - me.z) >= 100) dz = ` ${st.z > me.z ? '▲' : '▼'}${Math.abs(Math.round((st.z - me.z) * 0.0254))} m`
       const hovered = p.index === this.hovered
-      // Names only (HP is the ring); the focus player's in full, hover shows everything.
+      // Names only (HP is the ring), styled alike (the halo marks the focus player); theirs in full,
+      // hover shows everything.
       let str: string
       if (hovered) str = `${p.name} · ${st.hp} HP${st.armor > 0 ? ` · ${st.armor} armor` : ''}${st.weapon ? ` · ${st.weapon}` : ''}${st.place ? ` · ${st.place}` : ''}${dz}`
       else str = `${mine ? p.name : short(p.name)}${dz}`
-      text(x, y, R + (st.hp < 100 ? 3 * u : 0), str, mine ? th.me : th.fg, { bold: mine || hovered, alpha: mine || hovered ? 1 : 0.92, prio: hovered ? 3 : mine ? 2 : focus.includes(p.index) ? 1 : 0 })
+      text(x, y, R + (st.hp < 100 ? 3 * u : 0), str, th.fg, { bold: hovered, alpha: hovered ? 1 : 0.92, prio: hovered ? 3 : mine ? 2 : focus.includes(p.index) ? 1 : 0 })
       drawn.push({ index: p.index, x, y, r: R })
     }
     this.drawn = drawn
