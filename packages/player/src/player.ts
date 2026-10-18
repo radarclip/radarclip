@@ -111,6 +111,8 @@ const KILL_LINE = 1.5
 const FEED = 5
 const DMG_GAP = 1 // seconds between hits that still add to the same total
 const DMG_SHOW = 1.6 // seconds a total stays after its last hit (the last 0.4 s fading)
+const LABEL_FADE = 200 // ms for a label to fade out when something covers its spot, or back in
+const LABEL_HOLD = 500 // ms a hidden label's spot must stay free before it comes back
 const MIN_VIEW_WORLD = 400 // closest zoom: ~10 m across
 const PLAYER_RADIUS = 16 // world units: the player hitbox is 32 units (~0.8 m) wide
 const MIN_DOT = 4.5 // CSS px radius, so players stay easy to see at overview zoom; real size wins when zoomed in
@@ -216,6 +218,9 @@ export class RadarclipPlayer {
   /** Players drawn in the last frame (radar px), for hover. */
   private drawn: { index: number; x: number; y: number; r: number }[] = []
   private hovered: number | null = null
+  /** Label fades across frames (real time, so they finish while paused), by label key. */
+  private labelFade = new Map<string, { on: boolean; a: number; freeSince: number | null; at: number }>()
+  private fadeRaf = 0
   private lastMap = ''
   private _zoom: Zoom = 'fit'
   private _floor: Floor = 'upper'
@@ -269,6 +274,7 @@ export class RadarclipPlayer {
     this.shots = r.shots.map((s) => ({ ...s, hit: hits.find((h) => h.attacker === s.p && Math.abs(h.t - s.t) <= window)?.victim }))
     this.kills = r.events.filter((e): e is Extract<Event, { type: 'kill' }> => e.type === 'kill')
     this.damage = this.groupDamage(r)
+    this.labelFade.clear()
     this.fitBox = this.clampView(this.computeFit())
     // Keep a hand-picked view when switching rounds on the same map.
     if (!(this._zoom === 'free' && this.lastMap === clip.map)) this.applyZoom()
@@ -637,6 +643,7 @@ export class RadarclipPlayer {
 
   destroy() {
     this.pause()
+    if (typeof cancelAnimationFrame !== 'undefined') cancelAnimationFrame(this.fadeRaf)
     this.resizeObserver?.disconnect()
     this.listeners.clear()
   }
@@ -966,11 +973,11 @@ export class RadarclipPlayer {
       g.globalAlpha = 1
     }
 
-    // Labels are placed after everything else: highest priority first, each tries four spots
-    // around its anchor and is dropped when all of them overlap a label already placed.
-    const labels: { x: number; y: number; gap: number; str: string; fill: string; bold: boolean; alpha: number; prio: number }[] = []
-    const text = (x: number, y: number, gap: number, str: string, fill: string, { bold = false, alpha = 1, prio = 0 } = {}) =>
-      labels.push({ x, y, gap, str, fill, bold, alpha, prio })
+    // Labels are placed after everything else, highest priority first, always below their anchor.
+    // A label whose spot is taken fades out instead of moving (see the placement below).
+    const labels: { key: string; x: number; y: number; gap: number; str: string; fill: string; bold: boolean; alpha: number; prio: number }[] = []
+    const text = (key: string, x: number, y: number, gap: number, str: string, fill: string, { bold = false, alpha = 1, prio = 0 } = {}) =>
+      labels.push({ key, x, y, gap, str, fill, bold, alpha, prio })
 
     // Deaths so far, and attacker → victim lines right after a kill.
     // Drawn after the cones so a cone never hides a death.
@@ -983,7 +990,7 @@ export class RadarclipPlayer {
       const [x, y] = this.px(k.x, k.y)
       const col = this.color(k.victim)
       const d = 4.5 * u
-      text(x, y, d, short(r.players[k.victim]?.name ?? ''), th.fg, { alpha: 0.5, prio: -1 })
+      text(`d${k.victim}`, x, y, d, short(r.players[k.victim]?.name ?? ''), th.fg, { alpha: 0.5, prio: -1 })
       deaths.push(() => {
         g.beginPath()
         g.moveTo(x - d, y - d); g.lineTo(x + d, y + d); g.moveTo(x - d, y + d); g.lineTo(x + d, y - d)
@@ -1018,6 +1025,8 @@ export class RadarclipPlayer {
     const bodies: (() => void)[] = []
     const cones: (() => void)[] = []
     const drawn: typeof this.drawn = []
+    // Players with a damage total on screen: their names win over bystanders'.
+    const fighting = new Set(this.damage.filter((d) => t >= d.hits[0].t && t <= d.hits[d.hits.length - 1].t + DMG_SHOW * sec).map((d) => d.victim))
     for (const p of r.players) {
       const st = stateAt(r, p.index, t)
       // A canvas gradient throws on a non-finite position; never let one player blank the frame.
@@ -1123,7 +1132,7 @@ export class RadarclipPlayer {
       let str: string
       if (hovered) str = `${p.name} · ${st.hp} HP${st.armor > 0 ? ` · ${st.armor} armor` : ''}${st.weapon ? ` · ${st.weapon}` : ''}${st.place ? ` · ${st.place}` : ''}${dz}`
       else str = `${mine ? p.name : short(p.name)}${dz}`
-      text(x, y, R + (st.hp < 100 ? 3 * u : 0), str, th.fg, { bold: hovered, alpha: hovered ? 1 : 0.92, prio: hovered ? 3 : mine ? 2 : focus.includes(p.index) ? 1 : 0 })
+      text(`p${p.index}`, x, y, R + (st.hp < 100 ? 3 * u : 0), str, th.fg, { bold: hovered, alpha: hovered ? 1 : 0.92, prio: hovered ? 3 : mine ? 2 : focus.includes(p.index) ? 1 : fighting.has(p.index) ? 0.5 : 0 })
       drawn.push({ index: p.index, x, y, r: R })
     }
     this.drawn = drawn
@@ -1148,28 +1157,45 @@ export class RadarclipPlayer {
       g.strokeRect(bx - 2.5 * u, by - 2.5 * u, 5 * u, 5 * u)
     }
 
-    // Labels go below the dot first (the space above belongs to damage numbers), then right,
-    // left, and above as a last resort; they never cover a player.
+    // Labels sit below the dot (the space above belongs to damage numbers) and never move, so
+    // they don't jump around in close fights. One whose spot is covered by a player or a
+    // higher-priority label fades out, and comes back once the spot has stayed free for
+    // LABEL_HOLD, so it doesn't blink. The focus player's and the hovered label always show.
     const placed: [number, number, number, number][] = drawn.map((d) => [d.x - d.r, d.y - d.r, d.x + d.r, d.y + d.r])
     const lh = 11 * u
-    for (const l of labels.sort((a, b) => b.prio - a.prio)) {
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    const fades = this.labelFade
+    const seen = new Set<string>()
+    let fading = false
+    // Ties go to the label already showing, so two equal labels don't trade places.
+    labels.sort((a, b) => b.prio - a.prio || (fades.get(b.key)?.a ?? 0) - (fades.get(a.key)?.a ?? 0) || (a.key < b.key ? -1 : 1))
+    for (const l of labels) {
+      seen.add(l.key)
       g.font = `${l.bold ? 600 : 500} ${9 * u}px ${SANS}`
       const w = g.measureText(l.str).width
       const off = l.gap + 2.5 * u
-      const spots: [number, number][] = [
-        [l.x - w / 2, l.y + off + lh * 0.75], [l.x + off + u, l.y + lh * 0.3],
-        [l.x - off - u - w, l.y + lh * 0.3], [l.x - w / 2, l.y - off - lh * 0.25],
-      ]
       const boxOf = (lx: number, ly: number): [number, number, number, number] => [lx, ly - lh * 0.8, lx + w, ly + lh * 0.2]
       const visible = (b: [number, number, number, number]) => b[0] >= vx && b[1] >= vy && b[2] <= vx + vs && b[3] <= vy + vs
-      const free = (b: [number, number, number, number]) => placed.every(([a, c, e, f]) => b[2] <= a || b[0] >= e || b[3] <= c || b[1] >= f)
-      let spot = spots.find((sp) => visible(boxOf(...sp)) && free(boxOf(...sp)))
-      // The focus player's and the hovered label always show, inside the view if possible.
-      if (!spot && l.prio >= 2) spot = spots.find((sp) => visible(boxOf(...sp))) ?? spots[0]
-      if (!spot) continue
+      let spot: [number, number] = [l.x - w / 2, l.y + off + lh * 0.75]
+      // Only at the bottom edge of the view do the always-shown labels go above instead.
+      if (l.prio >= 2 && !visible(boxOf(...spot))) spot = [l.x - w / 2, l.y - off - lh * 0.25]
       const box = boxOf(...spot)
-      placed.push(box)
-      g.globalAlpha = l.alpha
+      const free = visible(box) && placed.every(([a, c, e, f]) => box[2] <= a || box[0] >= e || box[3] <= c || box[1] >= f)
+      let f = fades.get(l.key)
+      if (!f) fades.set(l.key, (f = { on: free, a: free ? 1 : 0, freeSince: free ? now : null, at: now }))
+      if (l.prio >= 2) Object.assign(f, { on: true, a: 1, freeSince: now })
+      else if (!free) Object.assign(f, { on: false, freeSince: null })
+      else {
+        f.freeSince ??= now
+        if (!f.on && now - f.freeSince >= LABEL_HOLD) f.on = true
+      }
+      const step = Math.min(1, Math.max(0, now - f.at) / LABEL_FADE)
+      f.a = f.on ? Math.min(1, f.a + step) : Math.max(0, f.a - step)
+      f.at = now
+      if (f.a !== (f.on ? 1 : 0) || (free && !f.on)) fading = true
+      if (f.on) placed.push(box)
+      if (f.a <= 0) continue
+      g.globalAlpha = l.alpha * f.a
       g.lineWidth = 2.4 * u
       g.strokeStyle = this.theme.bg
       g.lineJoin = 'round'
@@ -1177,6 +1203,12 @@ export class RadarclipPlayer {
       g.fillStyle = l.fill
       g.fillText(l.str, spot[0], spot[1])
       g.globalAlpha = 1
+    }
+    for (const k of fades.keys()) if (!seen.has(k)) fades.delete(k)
+    // While paused nothing else redraws: keep going until every fade has finished.
+    if (fading && !this._playing && typeof requestAnimationFrame !== 'undefined') {
+      cancelAnimationFrame(this.fadeRaf)
+      this.fadeRaf = requestAnimationFrame(() => this.replay && !this._playing && this.render())
     }
 
     // Damage: one running total above each victim, bumping on every hit, floating up as it fades.
