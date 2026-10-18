@@ -109,3 +109,27 @@ it('fits frame areas into the view together with the focus players', async () =>
   expect(x).toBeLessThanOrEqual(100 - 300 / 7)
   expect(y).toBeLessThanOrEqual(100 - 300 / 7)
 })
+
+it('takes view settings before a clip is loaded and applies them on load', async () => {
+  const p = new RadarclipPlayer(fakeCanvas(), { interactive: false })
+  const seen: StateKey[][] = []
+  p.onChange((_, changed) => seen.push([...changed]))
+  const times: number[] = []
+  p.on('view', (t) => times.push(t))
+  expect(() => {
+    p.zoom = 'map'
+    p.speed = 2
+    p.floor = 'lower'
+    p.seek(10)
+    p.play()
+  }).not.toThrow()
+  expect(seen).toEqual([['zoom'], ['speed'], ['floor']])
+  expect(times).toEqual([0, 0, 0])
+  expect(p.state).toMatchObject({ clip: null, time: 0, start: 0, end: 0, playing: false, zoom: 'map', speed: 2 })
+  await p.load(await readClip(readFileSync(fixture, 'utf8')))
+  const view = () => (p as unknown as { view: [number, number, number] }).view
+  expect(p.state).toMatchObject({ zoom: 'map', speed: 2 })
+  expect(view()).toEqual([0, 0, 1024])
+  p.zoom = 'fit'
+  expect(view()[2]).toBeLessThan(1024)
+})
