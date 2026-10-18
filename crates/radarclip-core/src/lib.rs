@@ -145,6 +145,9 @@ pub struct Clip {
     pub frames: u32,
     pub quant: Quant,
     pub focus: Vec<u32>,
+    /// Areas to keep in view besides the focus players, e.g. where a grenade went off.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frame: Vec<Area>,
     pub marks: Vec<Mark>,
     pub places: Vec<String>,
     pub weapons: Vec<String>,
@@ -184,6 +187,14 @@ impl Default for Tolerance {
 pub struct Mark {
     pub t: i64,
     pub label: String,
+}
+
+/// A circle on the map in world units.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct Area {
+    pub x: i64,
+    pub y: i64,
+    pub r: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

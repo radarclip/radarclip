@@ -53,6 +53,7 @@ Browsers decode `.radarclip` with `new DecompressionStream("deflate-raw")`.
   "frames": 161,               // frame f is at tick start + f * step
   "quant": {"xy": 4, "z": 8, "yaw": 2},
   "focus": [0],                // players to keep in view; the first is "me"
+  "frame": [{"x": -302, "y": 140, "r": 1200}],      // optional: areas to keep in view too
   "marks": [{"t": 3821, "label": "kill at Shop"}],  // the player opens at the first mark
   "places": ["BombsiteA", "CTSpawn"],               // map place names, by index
   "weapons": ["AK-47", "knife"],                    // active weapon names, by index
@@ -62,6 +63,10 @@ Browsers decode `.radarclip` with `new DecompressionStream("deflate-raw")`.
   "shots": { … }
 }
 ```
+
+`frame` lists circles in world units (`x`, `y`, radius `r`) that a player keeps in view
+together with the focus players, e.g. where a grenade landed and how far its effect reaches.
+Left out when empty.
 
 ## Players
 

@@ -25,6 +25,14 @@
       }
     },
     "focus": {"type": "array", "items": {"$ref": "#/$defs/player"}},
+    "frame": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["x", "y", "r"],
+        "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}, "r": {"type": "integer", "minimum": 0}}
+      }
+    },
     "marks": {
       "type": "array",
       "items": {

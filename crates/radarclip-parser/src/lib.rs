@@ -7,7 +7,7 @@ use parser::parse_demo::{DemoOutput, Parser, ParsingMode};
 use parser::second_pass::game_events::GameEvent;
 use parser::second_pass::parser_settings::create_huffman_lookup_table;
 use parser::second_pass::variants::{VarVec, Variant};
-use radarclip_core::{change_list, encode_track, Clip, Defuse, Detail, Event, Hit, Mark, MatchFile, MatchPlayer, MatchRound, Nade, Player, PlayerDetail, Quant, Sample, Shots, Tolerance, FORMAT, MATCH_FORMAT};
+use radarclip_core::{change_list, Area, encode_track, Clip, Defuse, Detail, Event, Hit, Mark, MatchFile, MatchPlayer, MatchRound, Nade, Player, PlayerDetail, Quant, Sample, Shots, Tolerance, FORMAT, MATCH_FORMAT};
 
 /// Ticks between the player samples kept in memory (16 per second at 64 tick).
 pub const GRID: i32 = 4;
@@ -89,6 +89,8 @@ pub struct ClipRequest {
     pub step: u32,
     /// Steam64 ids or player names; the first is drawn as "me".
     pub focus: Vec<String>,
+    /// Areas to keep in view besides the focus players (world units).
+    pub frame: Vec<Area>,
     pub marks: Vec<(f32, String)>,
     pub title: String,
     pub quant: Quant,
@@ -100,7 +102,7 @@ pub struct ClipRequest {
 impl ClipRequest {
     pub fn new(round: u32, from: f32, to: f32) -> Self {
         ClipRequest {
-            round, from, to, step: 8, focus: vec![], marks: vec![], title: String::new(),
+            round, from, to, step: 8, focus: vec![], frame: vec![], marks: vec![], title: String::new(),
             quant: Quant::default(), tolerance: Tolerance::default(), anonymize: false,
         }
     }
@@ -910,6 +912,7 @@ impl Match {
             frames: ticks.len() as u32,
             quant: req.quant,
             focus,
+            frame: req.frame.clone(),
             marks: req.marks.iter().map(|(t, label)| Mark { t: (t * tr).round() as i64, label: label.clone() }).collect(),
             places,
             weapons,

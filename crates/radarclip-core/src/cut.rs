@@ -1,7 +1,7 @@
 //! Cutting a shorter clip out of a longer one, e.g. a moment out of a stored full round, without
 //! going back to the demo.
 
-use crate::{decode_track, encode_track, Clip, Event, Mark, Nade, Player, Shots, Tolerance};
+use crate::{decode_track, Area, encode_track, Clip, Event, Mark, Nade, Player, Shots, Tolerance};
 
 /// What to cut. Times in ticks after the round's freeze end, like everything in a clip.
 #[derive(Debug, Clone, Default)]
@@ -10,6 +10,8 @@ pub struct Cut {
     pub to: i64,
     /// Indices into the clip's players; the first is the player the clip is about.
     pub focus: Vec<u32>,
+    /// Areas to keep in view besides the focus players (world units).
+    pub frame: Vec<Area>,
     pub marks: Vec<Mark>,
     /// `None` keeps the source clip's title.
     pub title: Option<String>,
@@ -120,6 +122,7 @@ pub fn cut(clip: &Clip, c: &Cut) -> Result<Clip, String> {
         start: clip.start + first * step,
         frames: (end - first + 1) as u32,
         focus: c.focus.clone(),
+        frame: c.frame.clone(),
         marks: c.marks.clone(),
         players,
         events,

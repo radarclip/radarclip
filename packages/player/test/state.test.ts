@@ -95,3 +95,17 @@ it('never steps before the start when a frame is older than play()', async () =>
   expect(p.time).toBeGreaterThanOrEqual(p.start)
   expect(p.time).toBeCloseTo(p.start)
 })
+
+it('fits frame areas into the view together with the focus players', async () => {
+  const clip = await readClip(readFileSync(fixture, 'utf8'))
+  const p = new RadarclipPlayer(fakeCanvas(), { interactive: false, radar: { pos_x: -3453, pos_y: 2887, scale: 7 } })
+  await p.load({ ...clip, focus: [0] })
+  const view = () => (p as unknown as { view: [number, number, number] }).view
+  const before = view()
+  // A 300-unit circle around radar px (100, 100), near the top-left corner.
+  await p.load({ ...clip, focus: [0], frame: [{ x: -3453 + 7 * 100, y: 2887 - 7 * 100, r: 300 }] })
+  const [x, y, size] = view()
+  expect(size).toBeGreaterThan(before[2])
+  expect(x).toBeLessThanOrEqual(100 - 300 / 7)
+  expect(y).toBeLessThanOrEqual(100 - 300 / 7)
+})

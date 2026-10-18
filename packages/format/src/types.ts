@@ -16,6 +16,8 @@ export interface Clip {
   frames: number
   quant: { xy: number; z: number; yaw: number }
   focus: number[]
+  /** Areas to keep in view besides the focus players, e.g. where a grenade went off. */
+  frame?: Area[]
   marks: Mark[]
   places: string[]
   weapons: string[]
@@ -29,6 +31,13 @@ export interface Clip {
 export interface Mark {
   t: number
   label: string
+}
+
+/** A circle on the map in world units. */
+export interface Area {
+  x: number
+  y: number
+  r: number
 }
 
 export interface Player {

@@ -1,7 +1,7 @@
 //! JS bindings: load a demo (in one piece or streamed in chunks), list its rounds and players,
 //! cut clips. Clips and info cross the boundary as JSON strings.
 
-use radarclip_core::{cut, Clip, Cut, Mark, Quant, Tolerance};
+use radarclip_core::{cut, Area, Clip, Cut, Mark, Quant, Tolerance};
 use radarclip_parser::{ClipRequest, Match, Progress};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -79,6 +79,8 @@ struct Request {
     #[serde(default)]
     focus: Vec<String>,
     #[serde(default)]
+    frame: Vec<Area>,
+    #[serde(default)]
     marks: Vec<(f32, String)>,
     #[serde(default)]
     title: String,
@@ -129,12 +131,12 @@ impl Demo {
         serde_json::to_string(&self.m.export().map_err(err)?).map_err(err)
     }
 
-    /// Cut a clip. `request` is JSON: `{round, from?, to?, step?, focus?, marks?: [[s, label]],
-    /// title?, anonymize?}`. Returns the radarclip/1 JSON.
+    /// Cut a clip. `request` is JSON: `{round, from?, to?, step?, focus?, frame?: [{x, y, r}],
+    /// marks?: [[s, label]], title?, anonymize?}`. Returns the radarclip/1 JSON.
     pub fn clip(&self, request: &str) -> Result<String, JsError> {
         let r: Request = serde_json::from_str(request).map_err(err)?;
         let req = ClipRequest {
-            round: r.round, from: r.from, to: r.to, step: r.step, focus: r.focus, marks: r.marks,
+            round: r.round, from: r.from, to: r.to, step: r.step, focus: r.focus, frame: r.frame, marks: r.marks,
             title: r.title, quant: Quant::default(), tolerance: Tolerance::default(), anonymize: r.anonymize,
         };
         serde_json::to_string(&self.m.clip(&req).map_err(err)?).map_err(err)
@@ -152,6 +154,8 @@ struct CutRequest {
     #[serde(default)]
     focus: Vec<u32>,
     #[serde(default)]
+    frame: Vec<Area>,
+    #[serde(default)]
     marks: Vec<(f32, String)>,
     #[serde(default)]
     title: Option<String>,
@@ -160,8 +164,8 @@ struct CutRequest {
 }
 
 /// Cut a moment out of a stored clip (e.g. a round of a `radarclip-match/1`) without the demo.
-/// `request` is JSON: `{from?, to?, focus?: [player index], marks?: [[s, label]], title?,
-/// anonymize?}`. Returns the radarclip/1 JSON.
+/// `request` is JSON: `{from?, to?, focus?: [player index], frame?: [{x, y, r}],
+/// marks?: [[s, label]], title?, anonymize?}`. Returns the radarclip/1 JSON.
 #[wasm_bindgen(js_name = cutClip)]
 pub fn cut_clip(clip: &str, request: &str) -> Result<String, JsError> {
     let clip: Clip = serde_json::from_str(clip).map_err(err)?;
@@ -171,6 +175,7 @@ pub fn cut_clip(clip: &str, request: &str) -> Result<String, JsError> {
         from: tick(r.from),
         to: tick(r.to.min(1e5)),
         focus: r.focus,
+        frame: r.frame,
         marks: r.marks.into_iter().map(|(t, label)| Mark { t: tick(t), label }).collect(),
         title: r.title,
         anonymize: r.anonymize,
