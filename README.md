@@ -40,6 +40,8 @@ For comparison, `gzip -9` gets the 293 MB Nuke demo only down to 203 MB.
 - **Viewer:** [radarclip.github.io/radarclip](https://radarclip.github.io/radarclip/) — drop a demo,
   watch every round. Parsed in your browser, never uploaded (`apps/viewer`).
 - **Radars:** `@radarclip/radars` knows every map's overview transform and where to load its radar.
+- **Navigation:** `@radarclip/nav` reads a map's navigation mesh: the area under a position,
+  walking routes and the fastest time between two spots, callouts per area learned from demos.
 - **Planned:** Python bindings.
 
 ## Player
