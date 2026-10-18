@@ -387,15 +387,15 @@ export class RadarclipPlayer {
 
   // --- playback ------------------------------------------------------------------------------
 
-  /** Seconds after the round's freeze end (round time 1:55 = 0). */
+  /** Seconds after the round's freeze end (round time 1:55 = 0); 0 until a clip is loaded. */
   get time() {
-    return this.tick / this.replay.tickrate
+    return this.replay ? this.tick / this.replay.tickrate : 0
   }
   get start() {
-    return this.replay.start / this.replay.tickrate
+    return this.replay ? this.replay.start / this.replay.tickrate : 0
   }
   get end() {
-    return this.replay.end / this.replay.tickrate
+    return this.replay ? this.replay.end / this.replay.tickrate : 0
   }
   get playing() {
     return this._playing
@@ -403,6 +403,7 @@ export class RadarclipPlayer {
 
   seek(seconds: number) {
     const r = this.replay
+    if (!r) return
     this.tick = Math.max(r.start, Math.min(r.end, seconds * r.tickrate))
     this.render()
     this.emit('time')
@@ -617,9 +618,9 @@ export class RadarclipPlayer {
     const r = this.replay
     return {
       clip: r?.clip ?? null,
-      time: r ? this.time : 0,
-      start: r ? this.start : 0,
-      end: r ? this.end : 0,
+      time: this.time,
+      start: this.start,
+      end: this.end,
       playing: this._playing,
       speed: this._speed,
       zoom: this._zoom,
