@@ -1,4 +1,4 @@
-import { decode, stateAt, type Clip, type Event, type Radar, type Replay } from '@radarclip/format'
+import { decode, placeName, stateAt, type Clip, type Event, type Radar, type Replay } from '@radarclip/format'
 
 export interface Theme {
   ct: string
@@ -1138,7 +1138,7 @@ export class RadarclipPlayer {
       // Names only (HP is the ring), styled alike (the halo marks the focus player); theirs in full,
       // hover shows everything.
       let str: string
-      if (hovered) str = `${p.name} · ${st.hp} HP${st.armor > 0 ? ` · ${st.armor} armor` : ''}${st.weapon ? ` · ${st.weapon}` : ''}${st.place ? ` · ${st.place}` : ''}${dz}`
+      if (hovered) str = `${p.name} · ${st.hp} HP${st.armor > 0 ? ` · ${st.armor} armor` : ''}${st.weapon ? ` · ${st.weapon}` : ''}${st.place ? ` · ${placeName(st.place)}` : ''}${dz}`
       else str = `${mine ? p.name : short(p.name)}${dz}`
       text(`p${p.index}`, x, y, R + (st.hp < 100 ? 3 * u : 0), str, th.fg, { bold: hovered, alpha: hovered ? 1 : 0.92, prio: hovered ? 3 : mine ? 2 : focus.includes(p.index) ? 1 : fighting.has(p.index) ? 0.5 : 0 })
       drawn.push({ index: p.index, x, y, r: R })

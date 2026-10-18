@@ -35,8 +35,12 @@ For comparison, `gzip -9` gets the 293 MB Nuke demo only down to 203 MB.
 - **Rust:** `radarclip-core` (format, encoder, decoder), `radarclip-parser` (CS2 demo → clips, on
   [demoparser2](https://github.com/LaihoE/demoparser)'s parser), `radarclip-cli`.
 - **WebAssembly:** `radarclip-wasm` parses demos in the browser; demos never leave the machine.
-- **TypeScript:** `@radarclip/format` (read/write, decode, interpolate), `@radarclip/player` (the
-  bare canvas viewer, no UI) and `@radarclip/controls` (playback controls that connect to it).
+- **TypeScript:** `@radarclip/format` (read/write, decode, interpolate, place names),
+  `@radarclip/player` (the bare canvas viewer, no UI) and `@radarclip/controls` (playback
+  controls that connect to it). `placeName('TopofMid')` gives "Top of Mid": the game's English
+  names, refreshed with `pnpm --filter @radarclip/format place-names` from a pinned copy of the
+  game files, with `OVERRIDES` in that script where players say something else ("CT Spawn", not
+  the game's "CT Start").
 - **Viewer:** [radarclip.github.io/radarclip](https://radarclip.github.io/radarclip/) — drop a demo,
   watch every round. Parsed in your browser, never uploaded (`apps/viewer`).
 - **Radars:** `@radarclip/radars` knows every map's overview transform and where to load its radar.
