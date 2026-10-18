@@ -19,12 +19,14 @@ const EVENTS: &[&str] = &[
     "round_freeze_end", "round_end", "round_announce_match_start", "player_death", "player_hurt",
     "player_blind", "weapon_fire", "smokegrenade_detonate", "smokegrenade_expired", "inferno_startburn",
     "inferno_expire", "flashbang_detonate", "hegrenade_detonate", "bomb_planted", "bomb_defused", "bomb_exploded",
-    "bomb_begindefuse", "bomb_abortdefuse",
+    "bomb_begindefuse", "bomb_abortdefuse", "bomb_beginplant", "bomb_pickup", "bomb_dropped",
 ];
 const TICK_PROPS: &[&str] = &[
     "X", "Y", "Z", "yaw", "health", "armor_value", "active_weapon_name", "last_place_name", "team_num", "is_alive",
     // Detail: loadout, money, sight.
     "inventory", "balance", "current_equip_value", "has_helmet", "has_defuser", "approximate_spotted_by",
+    // The C4 in hand is arming: CS2 sends no event when a plant is given up.
+    "m_bStartedArming",
 ];
 const NOT_SHOTS: &[&str] = &["smokegrenade", "flashbang", "hegrenade", "incgrenade", "molotov", "decoy", "c4"];
 
@@ -59,6 +61,8 @@ struct Raw {
     equip: i32,
     helmet: bool,
     kit: bool,
+    /// Planting: the C4 in hand is arming.
+    arming: bool,
     /// Index into `Match::gear`.
     gear: u32,
     /// Index into `Match::seen`.
@@ -117,6 +121,14 @@ pub struct Match {
     gear: Vec<Vec<String>>,
     /// Keys of the players who have someone in sight, sorted, interned.
     seen: Vec<Vec<String>>,
+}
+
+/// One defuse attempt, in demo ticks.
+struct Attempt<'a> {
+    start: &'a GameEvent,
+    kit: bool,
+    end: i32,
+    done: bool,
 }
 
 /// A whole-round clip with what is needed to add its detail.
@@ -467,6 +479,7 @@ impl Match {
         let (weapon, place) = (column(&st, "active_weapon_name"), column(&st, "last_place_name"));
         let (inventory, balance, equip) = (column(&st, "inventory"), column(&st, "balance"), column(&st, "current_equip_value"));
         let (helmet, kit, spotted) = (column(&st, "has_helmet"), column(&st, "has_defuser"), column(&st, "approximate_spotted_by"));
+        let arming = column(&st, "m_bStartedArming");
         let (mut gear, mut gear_ix, mut seen, mut seen_ix) = (vec![], AHashMap::default(), vec![], AHashMap::default());
         let rows = tick.map(var_len).unwrap_or(0);
 
@@ -506,6 +519,7 @@ impl Match {
                     equip: num_at(equip, i).unwrap_or(0.0) as i32,
                     helmet: num_at(helmet, i).map(|v| v > 0.0).unwrap_or(false),
                     kit: num_at(kit, i).map(|v| v > 0.0).unwrap_or(false),
+                    arming: num_at(arming, i).map(|v| v > 0.0).unwrap_or(false),
                     gear: intern_list(&mut gear, &mut gear_ix, strings_at(inventory, i).map(|s| s.to_vec()).unwrap_or_default()),
                     seen: intern_list(&mut seen, &mut seen_ix, u64s_at(spotted, i).unwrap_or_default().iter().filter(|&&s| s != 0).map(|s| s.to_string()).collect()),
                 });
@@ -561,6 +575,77 @@ impl Match {
         })
     }
 
+    /// Defuse attempts of a round: a start, then whatever ends it first (the defuser letting go or
+    /// dying, the defuse, the explosion, or the round end).
+    fn defuse_attempts(&self, round: &Round) -> Vec<Attempt<'_>> {
+        let in_round = |e: &&GameEvent| e.tick >= round.freeze_end && e.tick <= round.end;
+        let user = |e: &GameEvent| player_key(fstr(e, "user_steamid"), fstr(e, "user_name"));
+        self.events
+            .iter()
+            .filter(in_round)
+            .filter(|e| e.name == "bomb_begindefuse")
+            .map(|e| {
+                let by = user(e);
+                let stop = self.events.iter().filter(in_round).filter(|x| x.tick >= e.tick).find(|x| match x.name.as_str() {
+                    "bomb_abortdefuse" | "player_death" => user(x) == by && x.tick > e.tick,
+                    "bomb_defused" | "bomb_exploded" => true,
+                    _ => false,
+                });
+                Attempt {
+                    start: e,
+                    kit: fnum(e, "haskit") == Some(1.0),
+                    end: stop.map(|x| x.tick).unwrap_or(round.end),
+                    done: stop.is_some_and(|x| x.name == "bomb_defused"),
+                }
+            })
+            .collect()
+    }
+
+    /// Plant attempts of a round, also in the seconds kept after its end: a start, then the plant,
+    /// or the first sample where the planter's C4 no longer arms (let go, switched weapon, died).
+    fn plant_attempts(&self, round: &Round) -> Vec<Attempt<'_>> {
+        let last = round.end + POST_ROUND * self.tickrate as i32;
+        let in_round = |e: &&GameEvent| e.tick >= round.freeze_end && e.tick <= last;
+        let user = |e: &GameEvent| player_key(fstr(e, "user_steamid"), fstr(e, "user_name"));
+        self.events
+            .iter()
+            .filter(in_round)
+            .filter(|e| e.name == "bomb_beginplant")
+            .map(|e| {
+                let by = user(e);
+                let planted = self.events.iter().filter(in_round).find(|x| x.name == "bomb_planted" && x.tick >= e.tick && user(x) == by);
+                let p = by.as_ref().and_then(|k| self.players.iter().position(|pl| &pl.key == k));
+                let limit = planted.map(|x| x.tick).unwrap_or(last);
+                let first = (e.tick / GRID + 1) * GRID;
+                let let_go = p.and_then(|p| {
+                    (first..limit).step_by(GRID as usize).find(|&t| !self.samples[p].get((t / GRID) as usize).copied().flatten().is_some_and(|r| r.alive && r.arming))
+                });
+                Attempt { start: e, kit: false, end: let_go.unwrap_or(limit), done: let_go.is_none() && planted.is_some() }
+            })
+            .collect()
+    }
+
+    /// Bomb pickups and drops of a round up to `t1`, from the round start (the bomb is handed out
+    /// in freeze time). A drop lies where the next pickup happens, else where the dropper stood.
+    fn carry_events(&self, round: &Round, t1: i32) -> Vec<(&GameEvent, Option<(f64, f64, f64)>)> {
+        let ix = self.rounds.iter().position(|r| r.number == round.number).unwrap_or(0);
+        let from = if ix == 0 { 0 } else { self.rounds[ix - 1].end };
+        let at = |e: &GameEvent| Some((fnum(e, "user_X")?, fnum(e, "user_Y")?, fnum(e, "user_Z")?));
+        let list: Vec<&GameEvent> = self
+            .events
+            .iter()
+            .filter(|e| e.tick > from && e.tick <= round.end && (e.name == "bomb_pickup" || e.name == "bomb_dropped"))
+            .collect();
+        list.iter()
+            .enumerate()
+            .filter(|(_, e)| e.tick <= t1)
+            .map(|(i, &e)| {
+                let lies = if e.name == "bomb_dropped" { list[i + 1..].iter().find(|x| x.name == "bomb_pickup").and_then(|x| at(x)).or_else(|| at(e)) } else { None };
+                (e, lies)
+            })
+            .collect()
+    }
+
     /// Loadouts, money, sight and defuse attempts of one round, on the frames of its clip.
     fn detail(&self, round: &Round, k: &Keyed) -> Detail {
         let raw = |p: usize, t: i32| self.samples[p].get((t / GRID) as usize).copied().flatten();
@@ -583,25 +668,18 @@ impl Match {
             });
         }
 
-        // Defuse attempts: a start, then whatever ends it first.
         let who = |e: &GameEvent| player_key(fstr(e, "user_steamid"), fstr(e, "user_name")).and_then(|key| member_of.get(key.as_str()).map(|&i| i as u32));
-        let in_round = |e: &&GameEvent| e.tick >= round.freeze_end && e.tick <= round.end;
-        let mut defuses = vec![];
-        for e in self.events.iter().filter(in_round).filter(|e| e.name == "bomb_begindefuse") {
-            let by = who(e);
-            let stop = self.events.iter().filter(in_round).filter(|x| x.tick >= e.tick).find(|x| match x.name.as_str() {
-                "bomb_abortdefuse" | "player_death" => who(x) == by && x.tick > e.tick,
-                "bomb_defused" | "bomb_exploded" => true,
-                _ => false,
-            });
-            defuses.push(Defuse {
-                t: (e.tick - round.freeze_end) as i64,
-                by,
-                kit: fnum(e, "haskit") == Some(1.0),
-                end: (stop.map(|x| x.tick).unwrap_or(round.end) - round.freeze_end) as i64,
-                done: stop.is_some_and(|x| x.name == "bomb_defused"),
-            });
-        }
+        let defuses = self
+            .defuse_attempts(round)
+            .into_iter()
+            .map(|a| Defuse {
+                t: (a.start.tick - round.freeze_end) as i64,
+                by: who(a.start),
+                kit: a.kit,
+                end: (a.end - round.freeze_end) as i64,
+                done: a.done,
+            })
+            .collect();
         // Kills and hits with exact positions: the events carry both players' X/Y/Z/yaw.
         let pose = |e: &GameEvent, who: &str| -> Option<[i64; 4]> {
             let v = |k: &str| fnum(e, &format!("{who}_{k}")).map(|v| v.round() as i64);
@@ -766,6 +844,27 @@ impl Match {
                     }
                 }
                 _ => {}
+            }
+        }
+        // Plant and defuse attempts still running when the clip starts count too, like smokes.
+        for a in self.plant_attempts(round).into_iter().filter(|a| a.start.tick <= t1 && a.end >= t0) {
+            events.push(Event::Planting { t: rel(a.start.tick), by: who(a.start, "user"), until: rel(a.end), done: a.done });
+        }
+        for a in self.defuse_attempts(round).into_iter().filter(|a| a.start.tick <= t1 && a.end >= t0) {
+            events.push(Event::Defusing { t: rel(a.start.tick), by: who(a.start, "user"), until: rel(a.end), kit: a.kit, done: a.done });
+        }
+        // Who has the bomb: pickups and drops in the window, and the last one before it.
+        let carry = self.carry_events(round, t1);
+        let before = carry.iter().rposition(|(e, _)| e.tick < t0);
+        for (i, (e, lies)) in carry.into_iter().enumerate() {
+            if e.tick < t0 && Some(i) != before {
+                continue;
+            }
+            let (t, by) = (rel(e.tick), who(e, "user"));
+            match lies {
+                Some((x, y, z)) => events.push(Event::Drop { t, by, x: x.round() as i64, y: y.round() as i64, z: z.round() as i64 }),
+                None if e.name == "bomb_pickup" => events.push(Event::Pickup { t, by }),
+                None => {}
             }
         }
         events.sort_by_key(|e| e.t());

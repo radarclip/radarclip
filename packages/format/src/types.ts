@@ -67,6 +67,14 @@ export type Event =
   | ({ type: 'smoke' | 'molotov'; t: number; by?: number; until: number } & Pos)
   | ({ type: 'flash' | 'he' | 'plant'; t: number; by?: number } & Pos)
   | { type: 'defuse' | 'explode'; t: number; by?: number }
+  /** A defuse attempt until it was finished, stopped, or ended by death, the explosion or the
+   *  round end. `kit` and `done` are left out when false. */
+  | { type: 'defusing'; t: number; by?: number; until: number; kit?: boolean; done?: boolean }
+  /** A plant attempt until the bomb was planted (`done`) or the planter let go or died. */
+  | { type: 'planting'; t: number; by?: number; until: number; done?: boolean }
+  /** Who has the bomb: a pickup, or a drop with where the bomb lies. */
+  | { type: 'pickup'; t: number; by?: number }
+  | ({ type: 'drop'; t: number; by?: number } & Pos)
 
 export interface Nade {
   type: 'smoke' | 'flash' | 'he' | 'molotov' | 'decoy'

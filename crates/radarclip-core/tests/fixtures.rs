@@ -97,6 +97,11 @@ fn match_fixture_detail_fits_its_clips() {
         for x in &d.defuses {
             assert!(x.end >= x.t, "defuse ends before it starts");
         }
+        // The round's clip carries the same attempts as events, so cut moments keep them.
+        let defusing: Vec<_> = r.clip.events.iter().filter_map(|e| match e { radarclip_core::Event::Defusing { t, by, until, kit, done } => Some((*t, *by, *until, *kit, *done)), _ => None }).collect();
+        let defuses: Vec<_> = d.defuses.iter().map(|x| (x.t, x.by, x.end, x.kit, x.done)).collect();
+        assert_eq!(defusing, defuses, "round {}", r.number);
+        assert!(!defuses.is_empty(), "round {}: the reference rounds both have a defuse", r.number);
         // One exact kill per kill event, with the victim where the event says.
         let kills: Vec<_> = r.clip.events.iter().filter_map(|e| match e { radarclip_core::Event::Kill { t, victim, x, y, .. } => Some((*t, *victim, *x, *y)), _ => None }).collect();
         assert_eq!(d.kills.len(), kills.len(), "round {}", r.number);

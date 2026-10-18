@@ -22,8 +22,9 @@ pub struct Cut {
 const RECUT: Tolerance = Tolerance { xy: 1.0, yaw: 1.0 };
 
 /// Cut `c.from..=c.to` out of `clip`, with the same rules the parser uses for a window: kills,
-/// a plant and smokes or fires still burning from earlier in the round stay; everything else
-/// (hurts, blinds, pops, shots, grenade flights) only inside the window.
+/// a plant, smokes or fires still burning, plant and defuse attempts still running, and the last
+/// bomb pickup or drop (so a clip knows where the bomb is) from earlier in the round stay;
+/// everything else (hurts, blinds, pops, shots, grenade flights) only inside the window.
 pub fn cut(clip: &Clip, c: &Cut) -> Result<Clip, String> {
     let step = clip.step as i64;
     let last = clip.start + (clip.frames as i64 - 1) * step;
@@ -64,15 +65,21 @@ pub fn cut(clip: &Clip, c: &Cut) -> Result<Clip, String> {
         })
         .collect();
 
+    let carry = |e: &Event| matches!(e, Event::Pickup { .. } | Event::Drop { .. });
+    let carried_in = clip.events.iter().rposition(|e| carry(e) && e.t() < t0);
     let events = clip
         .events
         .iter()
-        .filter(|e| match e {
+        .enumerate()
+        .filter(|&(i, e)| match e {
+            _ if carry(e) => Some(i) == carried_in || (t0..=t1).contains(&e.t()),
             Event::Kill { t, .. } | Event::Plant { t, .. } => *t <= t1,
-            Event::Smoke { t, until, .. } | Event::Molotov { t, until, .. } => *t <= t1 && *until >= t0,
+            Event::Smoke { t, until, .. } | Event::Molotov { t, until, .. } | Event::Defusing { t, until, .. } | Event::Planting { t, until, .. } => {
+                *t <= t1 && *until >= t0
+            }
             e => (t0..=t1).contains(&e.t()),
         })
-        .cloned()
+        .map(|(_, e)| e.clone())
         .collect();
 
     let nades = clip
