@@ -95,6 +95,11 @@ export type Floor = 'upper' | 'lower'
 
 const ROUND_TIME = 115
 const BOMB_TIME = 40
+const DEFUSE = 10 // seconds to defuse without a kit
+const DEFUSE_KIT = 5
+const PLANT = 3.125
+const ATTEMPT_STOPPED = 1.5 // seconds a plant or defuse given up stays visible
+const BOMB = { planted: '#ff2b2b', defuse: '#4cd28a', explode: '#ff9a1f' }
 const SMOKE_R = 144 // world units
 const FIRE_R = 120
 const TRACER = 520 // world units drawn for a shot that hit nobody (~13 m)
@@ -135,6 +140,9 @@ const easeOut = (k: number) => 1 - Math.pow(1 - k, 3)
 /** Utility keeps its in-game reading (design system util-* tokens). */
 const UTIL = { smoke: '#cfd3d8', fire: '#ff5a1f', flash: '#ffffff', he: '#9cff57' }
 const clock = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.floor(Math.max(0, s) % 60)).padStart(2, '0')}`
+
+/** The bomb once planted; `at` is when it was defused or exploded. */
+type Bomb = { x: number; y: number; z: number; planted: number; state?: 'defuse' | 'explode'; at?: number }
 
 /** Radars registered by map name (e.g. by a page that hosts them). */
 const registry = new Map<string, Radar>()
@@ -878,20 +886,84 @@ export class RadarclipPlayer {
     }
     g.globalAlpha = 1
 
-    // Bomb.
-    let bomb: { x: number; y: number; z: number; planted: number; state?: 'defuse' | 'explode' } | null = null
+    // Plant and defuse attempts: a ring that fills clockwise over the time the attempt needs. An
+    // attempt given up stays as a white arc where it stopped, fading out, so fakes show; one that
+    // succeeds closes the ring, which widens once as it fades.
+    const attemptRing = (x: number, y: number, rad: number, e: { t: number; until: number; done?: boolean }, need: number, color: string) => {
+      const ring = (r: number, to: number, width: number, stroke: string) => {
+        g.beginPath()
+        g.arc(x, y, r, -Math.PI / 2, -Math.PI / 2 + to * Math.PI * 2)
+        g.lineWidth = (width * rad) / 10
+        g.strokeStyle = stroke
+        g.stroke()
+      }
+      const after = (t - e.until) / sec
+      if (t < e.t) return
+      if (t < e.until) {
+        g.globalAlpha = 1
+        ring(rad, 1, 3.4, 'rgba(14,16,20,.75)')
+        ring(rad, Math.min(1, (t - e.t) / need), 2.2, color)
+      } else if (!e.done && after < ATTEMPT_STOPPED) {
+        const fade = 1 - after / ATTEMPT_STOPPED
+        g.globalAlpha = fade
+        ring(rad, 1, 3.4, 'rgba(14,16,20,.75)')
+        g.globalAlpha = 0.75 * fade
+        // At least ~11°, so a tap shorter than a second still shows.
+        ring(rad, Math.max(0.03, Math.min(1, (e.until - e.t) / need)), 2.4, '#fff')
+      } else if (e.done && after < 1) {
+        g.globalAlpha = 1 - after
+        ring(rad * (1 + 0.6 * (1 - (1 - after) ** 3)), 1, 2.2, color)
+      }
+      g.globalAlpha = 1
+    }
+
+    // Bomb: carried (a badge on the carrier, drawn with the players), on the floor, or planted.
+    let bomb: Bomb | null = null
+    let carrier: number | undefined
+    let dropped: Extract<Event, { type: 'drop' }> | null = null
     for (const e of r.events) {
       if (e.t > t) break
       if (e.type === 'plant') bomb = { x: e.x, y: e.y, z: e.z, planted: e.t }
-      else if ((e.type === 'defuse' || e.type === 'explode') && bomb) bomb.state = e.type
+      else if ((e.type === 'defuse' || e.type === 'explode') && bomb) Object.assign(bomb, { state: e.type, at: e.t })
+      else if (e.type === 'pickup') [carrier, dropped] = [e.by, null]
+      else if (e.type === 'drop') [carrier, dropped] = [undefined, e]
+    }
+    if (bomb) [carrier, dropped] = [undefined, null]
+    // A dropped bomb: a dimmed square that sends out a ring every 2 s, so a loose bomb is easy to find.
+    if (dropped && this.onFloor(dropped.z)) {
+      const [x, y] = this.px(dropped.x, dropped.y)
+      const k = ((t - dropped.t) / sec) % 2 / 1.2
+      if (k < 1) {
+        circle(x, y, (5 + 12 * (1 - (1 - k) ** 3)) * u)
+        g.globalAlpha = 0.7 * (1 - k)
+        g.lineWidth = 1.4 * u
+        g.strokeStyle = BOMB.planted
+        g.stroke()
+      }
+      g.globalAlpha = 0.75
+      g.fillStyle = BOMB.planted
+      g.fillRect(x - 4 * u, y - 4 * u, 8 * u, 8 * u)
+      g.lineWidth = 1.2 * u
+      g.strokeStyle = 'rgba(14,16,20,.9)'
+      g.strokeRect(x - 4 * u, y - 4 * u, 8 * u, 8 * u)
+      g.globalAlpha = 1
     }
     if (bomb && this.onFloor(bomb.z)) {
       const [x, y] = this.px(bomb.x, bomb.y)
-      g.fillStyle = bomb.state === 'defuse' ? '#4cd28a' : bomb.state === 'explode' ? '#ff9a1f' : '#ff2b2b'
+      g.fillStyle = bomb.state === 'defuse' ? BOMB.defuse : bomb.state === 'explode' ? BOMB.explode : BOMB.planted
       g.fillRect(x - 4.5 * u, y - 4.5 * u, 9 * u, 9 * u)
       g.lineWidth = 1.2 * u
       g.strokeStyle = '#fff'
       g.strokeRect(x - 4.5 * u, y - 4.5 * u, 9 * u, 9 * u)
+      // The plant that just landed widens once from here; defuses fill a ring on the bomb (5 s
+      // with a kit, 10 s without). Zoomed in, the ring grows with the players.
+      const rad = Math.max(10 * u, (2.2 * PLAYER_RADIUS) / this.radar.scale)
+      for (const e of r.events) {
+        if (e.t > t) break
+        if (e.type === 'planting' && e.done) attemptRing(x, y, rad, e, PLANT * sec, BOMB.planted)
+        if (e.type === 'defusing') attemptRing(x, y, rad, e, (e.kit ? DEFUSE_KIT : DEFUSE) * sec, BOMB.defuse)
+      }
+      g.globalAlpha = 1
     }
 
     // Labels are placed after everything else: highest priority first, each tries four spots
@@ -1046,6 +1118,23 @@ export class RadarclipPlayer {
     for (const c of cones) c()
     for (const d of deaths) d()
     for (const b of bodies) b()
+    // The carrier's bomb: a small square at the top right of their dot, and while they plant, a
+    // ring around them that fills in bomb red.
+    const held = carrier !== undefined ? stateAt(r, carrier, t) : null
+    if (held && this.onFloor(held.z)) {
+      const [x, y] = this.px(held.x, held.y)
+      for (const e of r.events) {
+        if (e.t > t) break
+        // A plant that lands widens from the bomb instead (see above).
+        if (e.type === 'planting' && e.by === carrier && !(e.done && t >= e.until)) attemptRing(x, y, R + 9 * u, e, PLANT * sec, BOMB.planted)
+      }
+      const bx = x + R + 1.5 * u, by = y - R - 1.5 * u
+      g.fillStyle = BOMB.planted
+      g.fillRect(bx - 2.5 * u, by - 2.5 * u, 5 * u, 5 * u)
+      g.lineWidth = 1 * u
+      g.strokeStyle = 'rgba(14,16,20,.9)'
+      g.strokeRect(bx - 2.5 * u, by - 2.5 * u, 5 * u, 5 * u)
+    }
 
     // Labels go below the dot first (the space above belongs to damage numbers), then right,
     // left, and above as a last resort; they never cover a player.
@@ -1125,7 +1214,7 @@ export class RadarclipPlayer {
     if (this.opts.hud !== false) this.drawHud(t, bomb, dpr)
   }
 
-  private drawHud(t: number, bomb: { planted: number; state?: string } | null, dpr: number) {
+  private drawHud(t: number, bomb: Bomb | null, dpr: number) {
     const r = this.replay
     const g = this.ctx
     const W = this.canvas.width
@@ -1141,9 +1230,9 @@ export class RadarclipPlayer {
       g.fill()
     }
 
-    // Clock: round time, or the bomb timer once planted.
-    const planted = bomb && !bomb.state
-    const left = planted ? BOMB_TIME - (t - bomb.planted) / r.tickrate : ROUND_TIME - t / r.tickrate
+    // Clock: round time, or the bomb timer once planted; it stops on the time left when the bomb
+    // is defused or explodes.
+    const left = bomb ? BOMB_TIME - ((bomb.at ?? t) - bomb.planted) / r.tickrate : ROUND_TIME - t / r.tickrate
     const main = clock(left)
     const sub = `R${r.clip.round}`
     font(15, 600, true)
@@ -1153,7 +1242,7 @@ export class RadarclipPlayer {
     const clockRight = pad + wMain + wSub + 22 * k
     pill(pad, pad, clockRight - pad, 26 * k)
     font(15, 600, true)
-    g.fillStyle = planted ? '#ff2b2b' : this.theme.fg
+    g.fillStyle = bomb ? BOMB[bomb.state ?? 'planted'] : this.theme.fg
     g.textBaseline = 'middle'
     g.fillText(main, pad + 8 * k, pad + 13 * k)
     font(11, 500)
