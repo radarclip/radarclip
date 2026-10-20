@@ -23,8 +23,11 @@ export interface PlayerOptions {
   /** Radar for the clip's map; falls back to `clip.radar`, then the registry, then a plain background. */
   radar?: RadarSource
   theme?: Partial<Theme>
-  /** Draw clock, kill feed and mark labels onto the canvas (default true). */
-  hud?: boolean
+  /**
+   * Draw clock, kill feed and mark labels onto the canvas (default true). `false` hides all of
+   * them; an object hides single parts (`{ marks: false }`), a part left out stays on.
+   */
+  hud?: boolean | HudParts
   /** Drag to pan, wheel/pinch to zoom, double-click to reset (default true). */
   interactive?: boolean
   /** Zoom with the mouse wheel (default true). Turn off on pages that scroll past many players. */
@@ -38,6 +41,54 @@ export interface PlayerOptions {
    * An icon that fails to load falls back to the name or the drawn symbol.
    */
   icon?: ((name: string) => string | undefined) | false
+}
+
+/** The HUD's parts; one left out stays on. */
+export interface HudParts {
+  clock?: boolean
+  killFeed?: boolean
+  marks?: boolean
+}
+
+const hudParts = (hud: boolean | HudParts | undefined): Required<HudParts> =>
+  hud === false
+    ? { clock: false, killFeed: false, marks: false }
+    : typeof hud === 'object'
+      ? { clock: hud.clock !== false, killFeed: hud.killFeed !== false, marks: hud.marks !== false }
+      : { clock: true, killFeed: true, marks: true }
+
+/** One frame drawn off-screen by `snapshot`. */
+export interface SnapshotOptions {
+  /** Size of the image in px. */
+  width: number
+  height: number
+  /** Seconds after freeze end, as `seek` takes them (default: the current time). */
+  time?: number
+  /** 'fit' (default): around the focus players; 'map': the whole radar; 'current': the view on screen. */
+  zoom?: 'fit' | 'map' | 'current'
+  /** Default: the player's own `hud` option. */
+  hud?: boolean | HudParts
+  /** Size of clock, kill feed and mark label against the map (default 1). */
+  hudScale?: number
+  /** Image type and quality, as `canvas.toBlob` takes them (default PNG). */
+  type?: string
+  quality?: number
+}
+
+/** Where and what `draw` paints: the canvas on screen, or a snapshot's own. */
+interface Frame {
+  g: CanvasRenderingContext2D
+  /** Size in device px, and the CSS width the sizes of text and lines follow. */
+  W: number
+  H: number
+  cssW: number
+  dpr: number
+  view: [number, number, number]
+  tick: number
+  hud: Required<HudParts>
+  hudScale: number
+  /** The canvas on screen: keeps hover, label fades and the mapping for the pointer. */
+  live: boolean
 }
 
 const GAME_ICONS = 'https://cdn.jsdelivr.net/gh/Juknum/counter-strike-icons@899560e1a023fcbd1a090fa4fcbf1119a68145f2/cs2/panorama/images/'
@@ -754,8 +805,7 @@ export class RadarclipPlayer {
   }
 
   render() {
-    const r = this.replay
-    if (!r) return
+    if (!this.replay) return
     const cv = this.canvas
     const dpr = typeof devicePixelRatio === 'number' ? devicePixelRatio : 1
     const cssW = cv.clientWidth || cv.width
@@ -765,8 +815,44 @@ export class RadarclipPlayer {
       cv.width = W
       cv.height = H
     }
-    const g = this.ctx
-    const t = this.tick
+    this.draw({ g: this.ctx, W, H, cssW, dpr, view: this.view, tick: this.tick, hud: hudParts(this.opts.hud), hudScale: 1, live: true })
+  }
+
+  /**
+   * One frame drawn off-screen at its own size, moment and framing, e.g. for a share image. The
+   * view on screen doesn't change.
+   */
+  async snapshot(o: SnapshotOptions): Promise<Blob> {
+    const r = this.replay
+    if (!r) throw new Error('No clip loaded')
+    const W = Math.round(o.width), H = Math.round(o.height)
+    const cv = typeof OffscreenCanvas !== 'undefined'
+      ? new OffscreenCanvas(W, H)
+      : Object.assign(document.createElement('canvas'), { width: W, height: H })
+    const tick = o.time == null ? this.tick : Math.max(r.start, Math.min(r.end, o.time * r.tickrate))
+    const zoom = o.zoom ?? 'fit'
+    const view = zoom === 'current' ? this.view : zoom === 'map' ? ([0, 0, 1024] as [number, number, number]) : this.fitBox
+    // At another moment, the floor the focus player is on then, as load picks it.
+    const floor = this._floor
+    const me = o.time != null && r.clip.focus.length ? stateAt(r, r.clip.focus[0], tick) : null
+    if (me && this.split != null) this._floor = me.z < this.split ? 'lower' : 'upper'
+    try {
+      const g = cv.getContext('2d') as CanvasRenderingContext2D
+      this.draw({ g, W, H, cssW: W, dpr: 1, view, tick, hud: hudParts(o.hud ?? this.opts.hud), hudScale: o.hudScale ?? 1, live: false })
+    } finally {
+      this._floor = floor
+    }
+    const type = o.type ?? 'image/png'
+    if ('convertToBlob' in cv) return cv.convertToBlob({ type, quality: o.quality })
+    return new Promise((resolve, reject) =>
+      cv.toBlob((b) => (b ? resolve(b) : reject(new Error('The snapshot could not be encoded'))), type, o.quality),
+    )
+  }
+
+  private draw(f: Frame) {
+    const r = this.replay
+    const { g, W, H, cssW, dpr } = f
+    const t = f.tick
     const sec = r.tickrate
     const th = this.theme
 
@@ -775,11 +861,11 @@ export class RadarclipPlayer {
     g.fillRect(0, 0, W, H)
 
     // View: a square box of radar px, fitted into the canvas.
-    const [vx, vy, vs] = this.view
+    const [vx, vy, vs] = f.view
     const side = Math.min(W, H)
     const s = side / vs
     const ox = (W - side) / 2, oy = (H - side) / 2
-    this.screen = { s, ox, oy, dpr }
+    if (f.live) this.screen = { s, ox, oy, dpr }
     g.setTransform(s, 0, 0, s, ox - vx * s, oy - vy * s)
     const u = (dpr * Math.max(1, cssW / 640)) / s // one CSS px (a bit more on big canvases), in radar px
 
@@ -1175,7 +1261,7 @@ export class RadarclipPlayer {
       })
       let dz = ''
       if (!mine && me && Math.abs(st.z - me.z) >= 100) dz = ` ${st.z > me.z ? '▲' : '▼'}${Math.abs(Math.round((st.z - me.z) * 0.0254))} m`
-      const hovered = p.index === this.hovered
+      const hovered = f.live && p.index === this.hovered
       // Names only (HP is the ring), styled alike (the halo marks the focus player); theirs in full,
       // hover shows everything.
       let str: string
@@ -1184,7 +1270,7 @@ export class RadarclipPlayer {
       text(`p${p.index}`, x, y, R + (st.hp < 100 ? 3 * u : 0), str, th.fg, { bold: hovered, alpha: hovered ? 1 : 0.92, prio: hovered ? 3 : mine ? 2 : focus.includes(p.index) ? 1 : fighting.has(p.index) ? 0.5 : 0 })
       drawn.push({ index: p.index, x, y, r: R })
     }
-    this.drawn = drawn
+    if (f.live) this.drawn = drawn
     for (const c of cones) c()
     for (const d of deaths) d()
     for (const b of bodies) b()
@@ -1213,7 +1299,8 @@ export class RadarclipPlayer {
     const placed: [number, number, number, number][] = drawn.map((d) => [d.x - d.r, d.y - d.r, d.x + d.r, d.y + d.r])
     const lh = 11 * u
     const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
-    const fades = this.labelFade
+    // A snapshot starts without fades: every label shows as it settles.
+    const fades = f.live ? this.labelFade : new Map<string, { on: boolean; a: number; freeSince: number | null; at: number }>()
     const seen = new Set<string>()
     let fading = false
     // Ties go to the label already showing, so two equal labels don't trade places.
@@ -1255,7 +1342,7 @@ export class RadarclipPlayer {
     }
     for (const k of fades.keys()) if (!seen.has(k)) fades.delete(k)
     // While paused nothing else redraws: keep going until every fade has finished.
-    if (fading && !this._playing && typeof requestAnimationFrame !== 'undefined') {
+    if (f.live && fading && !this._playing && typeof requestAnimationFrame !== 'undefined') {
       cancelAnimationFrame(this.fadeRaf)
       this.fadeRaf = requestAnimationFrame(() => this.replay && !this._playing && this.render())
     }
@@ -1304,15 +1391,14 @@ export class RadarclipPlayer {
     }
 
     g.setTransform(1, 0, 0, 1, 0, 0)
-    if (this.opts.hud !== false) this.drawHud(t, bomb, dpr)
+    this.drawHud(f, bomb)
   }
 
-  private drawHud(t: number, bomb: Bomb | null, dpr: number) {
+  private drawHud(f: Frame, bomb: Bomb | null) {
     const r = this.replay
-    const g = this.ctx
-    const W = this.canvas.width
-    const H = this.canvas.height
-    const k = dpr * Math.max(1, this.canvas.clientWidth / 640 || 1)
+    const { g, W, H, hud } = f
+    const t = f.tick
+    const k = f.dpr * Math.max(1, f.cssW / 640 || 1) * f.hudScale
     const pad = 8 * k
     const font = (size: number, weight = 500, mono = false) =>
       (g.font = `${weight} ${size * k}px ${mono ? MONO : SANS}`)
@@ -1326,26 +1412,31 @@ export class RadarclipPlayer {
     // Clock: round time, or the bomb timer once planted; it stops on the time left when the bomb
     // is defused or explodes. No pill: the digits get the map labels' dark outline, and the round
     // number sits small under them.
-    const left = bomb ? BOMB_TIME - ((bomb.at ?? t) - bomb.planted) / r.tickrate : ROUND_TIME - t / r.tickrate
-    const main = clock(left)
-    const sub = `R${r.clip.round}`
-    const cx0 = pad + 2 * k
-    g.textBaseline = 'alphabetic'
+    // Without it, the kill feed has the whole width.
+    let clockRight = 0, clockBottom = 0
     g.lineJoin = 'round'
-    font(15, 600, true)
-    const wMain = g.measureText(main).width
-    g.lineWidth = 3 * k
-    g.strokeStyle = this.theme.bg
-    g.strokeText(main, cx0, pad + 14 * k)
-    g.fillStyle = bomb ? BOMB[bomb.state ?? 'planted'] : this.theme.fg
-    g.fillText(main, cx0, pad + 14 * k)
-    g.font = `600 ${11 * k}px ${DISPLAY}`
-    const wSub = g.measureText(sub).width
-    g.lineWidth = 2.4 * k
-    g.strokeText(sub, cx0, pad + 29 * k)
-    g.fillStyle = this.theme.muted
-    g.fillText(sub, cx0, pad + 29 * k)
-    const clockRight = cx0 + Math.max(wMain, wSub)
+    if (hud.clock) {
+      const left = bomb ? BOMB_TIME - ((bomb.at ?? t) - bomb.planted) / r.tickrate : ROUND_TIME - t / r.tickrate
+      const main = clock(left)
+      const sub = `R${r.clip.round}`
+      const cx0 = pad + 2 * k
+      g.textBaseline = 'alphabetic'
+      font(15, 600, true)
+      const wMain = g.measureText(main).width
+      g.lineWidth = 3 * k
+      g.strokeStyle = this.theme.bg
+      g.strokeText(main, cx0, pad + 14 * k)
+      g.fillStyle = bomb ? BOMB[bomb.state ?? 'planted'] : this.theme.fg
+      g.fillText(main, cx0, pad + 14 * k)
+      g.font = `600 ${11 * k}px ${DISPLAY}`
+      const wSub = g.measureText(sub).width
+      g.lineWidth = 2.4 * k
+      g.strokeText(sub, cx0, pad + 29 * k)
+      g.fillStyle = this.theme.muted
+      g.fillText(sub, cx0, pad + 29 * k)
+      clockRight = cx0 + Math.max(wMain, wSub)
+      clockBottom = pad + 33 * k
+    }
     g.textBaseline = 'middle'
 
     // Kill feed, in the game's order: [blind] attacker [+ flash assister] weapon [no-scope, smoke,
@@ -1382,11 +1473,11 @@ export class RadarclipPlayer {
     // The feed stays in the top-right corner. A row that would reach the clock gets narrower
     // instead: first without the assister's name, then with shorter and shorter names. Weapon and
     // kill icons always stay. On narrow maps names start at 10 characters.
-    const narrow = this.canvas.clientWidth > 0 && this.canvas.clientWidth < 520
+    const narrow = f.cssW > 0 && f.cssW < 520
     const clip = (name: string, max: number) => ([...name].length > max ? [...name].slice(0, max - 1).join('') + '…' : name)
-    const clockBottom = pad + 33 * k
     let y = pad
     for (const e of this.kills) {
+      if (!hud.killFeed) break
       if (e.t > t || e.t <= t - FEED * r.tickrate) continue
       type Part = { w: number; draw: (x: number, cy: number) => void }
       const build = (maxName: number, assisterName: boolean): Part[] => {
@@ -1466,7 +1557,7 @@ export class RadarclipPlayer {
     // Mark label: the latest labelled mark stays until the next one, so notes change as the clip
     // plays. A focus diamond leads it; long labels wrap within the canvas (see wrap).
     let mark: (typeof r.clip.marks)[number] | undefined
-    for (const m of r.clip.marks) if (m.label && m.t <= t && (!mark || m.t >= mark.t)) mark = m
+    if (hud.marks) for (const m of r.clip.marks) if (m.label && m.t <= t && (!mark || m.t >= mark.t)) mark = m
     if (mark?.label) {
       font(12, 500)
       const LINE = 16 * k
