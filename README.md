@@ -63,7 +63,10 @@ For comparison, `gzip -9` gets the 293 MB Nuke demo only down to 203 MB.
 
 Or drive a canvas yourself: `const p = new RadarclipPlayer(canvas, { radar }); await p.load(clip);
 p.play(); p.seek(59.7); p.on('time', …); await p.toBlob()`. Without a radar it draws on a plain
-background. Colours via `--radarclip-ct`, `-t`, `-me`, `-bg`, `-fg`, `-muted`.
+background. `hud: false` hides clock, kill feed and mark label, `hud: { marks: false }` single
+parts. `await p.snapshot({ width: 1200, height: 630, time, hud: { marks: false }, hudScale: 2 })`
+draws one frame off-screen at its own size, moment and framing (`zoom: 'fit'` by default), e.g.
+for a share image; the view on screen stays as it is. Colours via `--radarclip-ct`, `-t`, `-me`, `-bg`, `-fg`, `-muted`.
 
 Kill-feed icons are the game's own, loaded from jsDelivr. To serve them yourself, copy
 counter-strike-icons' `cs2/panorama/images/` (`icons/equipment/`, `hud/deathnotice/`) and set
