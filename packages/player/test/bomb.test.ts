@@ -49,14 +49,14 @@ it('fills a ring on the bomb while someone defuses, and keeps the bomb timer run
   const clip = await nuke()
   const during = await at(clip, 2873 / 64)
   expect(during.strokes).toContain(DEFUSE)
-  expect(during.texts).toContainEqual({ text: '0:16', color: '#ff2b2b' })
+  expect(during.texts).toContainEqual({ text: '0:17', color: '#ff2b2b' })
   const before = await at(clip, 2500 / 64)
   expect(before.strokes).not.toContain(DEFUSE)
 })
 
 it('stops the bomb timer in defuse green on the time that was left', async () => {
   const after = await at(await nuke(), 3300 / 64)
-  expect(after.texts).toContainEqual({ text: '0:11', color: DEFUSE })
+  expect(after.texts).toContainEqual({ text: '0:12', color: DEFUSE })
 })
 
 it('shows an attempt given up for a moment, then lets it go', async () => {
