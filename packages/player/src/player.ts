@@ -784,7 +784,12 @@ export class RadarclipPlayer {
     const u = (dpr * Math.max(1, cssW / 640)) / s // one CSS px (a bit more on big canvases), in radar px
 
     const img = this._floor === 'lower' && this.images.lower ? this.images.lower : this.images.upper
-    if (img) g.drawImage(img, 0, 0, 1024, 1024)
+    // One source pixel in from every edge: some radars (Nuke) carry a half-opaque grey frame
+    // there, which shows as a seam against the background where the radar ends.
+    if (img) {
+      const k = img.width / 1024
+      g.drawImage(img, k, k, img.width - 2 * k, img.height - 2 * k, 1, 1, 1022, 1022)
+    }
 
     const circle = (x: number, y: number, rad: number) => {
       g.beginPath()
