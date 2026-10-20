@@ -15,6 +15,7 @@ export const DEFAULT_THEME: Theme = { ct: '#5aa9e6', t: '#e8a33d', me: '#9d8cff'
 /** Text on the map: Geist when the page loads it, the system face otherwise. */
 const SANS = 'Geist, system-ui, -apple-system, "Segoe UI", sans-serif'
 const MONO = '"Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace'
+const DISPLAY = '"Saira Semi Condensed", "Arial Narrow", system-ui, sans-serif'
 
 export type RadarSource = Radar | ((map: string) => Radar | undefined | Promise<Radar | undefined>)
 
@@ -141,7 +142,47 @@ const DANGER = '#ff6b5e'
 const easeOut = (k: number) => 1 - Math.pow(1 - k, 3)
 /** Utility keeps its in-game reading (design system util-* tokens). */
 const UTIL = { smoke: '#cfd3d8', fire: '#ff5a1f', flash: '#ffffff', he: '#9cff57' }
-const clock = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.floor(Math.max(0, s) % 60)).padStart(2, '0')}`
+const MARK_LINES = 3
+
+/**
+ * Splits `text` into at most `max` lines no wider than `width`: at spaces, and inside a word only
+ * when it is wider than a line on its own. Text left over ends the last line in an ellipsis.
+ */
+export function wrap(text: string, width: number, max: number, measure: (s: string) => number): string[] {
+  const pieces = text.trim().split(/\s+/).flatMap((word) => {
+    const out: string[] = []
+    let rest = [...word]
+    while (rest.length > 1 && measure(rest.join('')) > width) {
+      let n = rest.length - 1
+      while (n > 1 && measure(rest.slice(0, n).join('')) > width) n--
+      out.push(rest.slice(0, n).join(''))
+      rest = rest.slice(n)
+    }
+    out.push(rest.join(''))
+    return out
+  })
+  const lines: string[] = []
+  let line = ''
+  let cut = false
+  for (const p of pieces) {
+    const next = line ? `${line} ${p}` : p
+    if (!line || measure(next) <= width) { line = next; continue }
+    lines.push(line)
+    if (lines.length === max) { cut = true; break }
+    line = p
+  }
+  if (!cut) { lines.push(line); return lines }
+  const last = [...lines[max - 1]]
+  while (last.length && measure(`${last.join('').trimEnd()}…`) > width) last.pop()
+  lines[max - 1] = `${last.join('').trimEnd()}…`
+  return lines
+}
+
+// Rounded up, like the game's clock: the round starts on 1:55 and 0:00 means time is up.
+const clock = (s: number) => {
+  const n = Math.max(0, Math.ceil(s - 1e-6))
+  return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`
+}
 
 /** The bomb once planted; `at` is when it was defused or exploded. */
 type Bomb = { x: number; y: number; z: number; planted: number; state?: 'defuse' | 'explode'; at?: number }
@@ -1275,36 +1316,42 @@ export class RadarclipPlayer {
     const pad = 8 * k
     const font = (size: number, weight = 500, mono = false) =>
       (g.font = `${weight} ${size * k}px ${mono ? MONO : SANS}`)
-    const pill = (x: number, y: number, w: number, h: number) => {
-      g.fillStyle = 'rgba(0,0,0,.6)'
+    const pill = (x: number, y: number, w: number, h: number, fill = 'rgba(0,0,0,.6)') => {
+      g.fillStyle = fill
       g.beginPath()
-      g.roundRect(x, y, w, h, 5 * k)
+      g.roundRect(x, y, w, h, 6 * k)
       g.fill()
     }
 
     // Clock: round time, or the bomb timer once planted; it stops on the time left when the bomb
-    // is defused or explodes.
+    // is defused or explodes. No pill: the digits get the map labels' dark outline, and the round
+    // number sits small under them.
     const left = bomb ? BOMB_TIME - ((bomb.at ?? t) - bomb.planted) / r.tickrate : ROUND_TIME - t / r.tickrate
     const main = clock(left)
     const sub = `R${r.clip.round}`
+    const cx0 = pad + 2 * k
+    g.textBaseline = 'alphabetic'
+    g.lineJoin = 'round'
     font(15, 600, true)
     const wMain = g.measureText(main).width
-    font(11, 500)
-    const wSub = g.measureText(sub).width
-    const clockRight = pad + wMain + wSub + 22 * k
-    pill(pad, pad, clockRight - pad, 26 * k)
-    font(15, 600, true)
+    g.lineWidth = 3 * k
+    g.strokeStyle = this.theme.bg
+    g.strokeText(main, cx0, pad + 14 * k)
     g.fillStyle = bomb ? BOMB[bomb.state ?? 'planted'] : this.theme.fg
-    g.textBaseline = 'middle'
-    g.fillText(main, pad + 8 * k, pad + 13 * k)
-    font(11, 500)
+    g.fillText(main, cx0, pad + 14 * k)
+    g.font = `600 ${11 * k}px ${DISPLAY}`
+    const wSub = g.measureText(sub).width
+    g.lineWidth = 2.4 * k
+    g.strokeText(sub, cx0, pad + 29 * k)
     g.fillStyle = this.theme.muted
-    g.fillText(sub, pad + 14 * k + wMain, pad + 13 * k)
+    g.fillText(sub, cx0, pad + 29 * k)
+    const clockRight = cx0 + Math.max(wMain, wSub)
+    g.textBaseline = 'middle'
 
     // Kill feed, in the game's order: [blind] attacker [+ flash assister] weapon [no-scope, smoke,
     // wallbang, headshot] victim. Names keep their side colours; the focus player's rows get an outline.
     const focusIx = r.clip.focus[0]
-    const H_ROW = 22 * k, ICON_H = 14 * k, SYM = 13 * k, GAP = 5 * k
+    const H_ROW = 22 * k, ICON_H = 14 * k, SYM = 13 * k, GAP = 6 * k
     const symbol = (name: keyof typeof SYMBOL, x: number, cy: number) => {
       const img = this.icon(name)
       if (img) {
@@ -1337,7 +1384,7 @@ export class RadarclipPlayer {
     // kill icons always stay. On narrow maps names start at 10 characters.
     const narrow = this.canvas.clientWidth > 0 && this.canvas.clientWidth < 520
     const clip = (name: string, max: number) => ([...name].length > max ? [...name].slice(0, max - 1).join('') + '…' : name)
-    const clockBottom = pad + 26 * k
+    const clockBottom = pad + 33 * k
     let y = pad
     for (const e of this.kills) {
       if (e.t > t || e.t <= t - FEED * r.tickrate) continue
@@ -1413,17 +1460,29 @@ export class RadarclipPlayer {
         p.draw(cx, cy)
         cx += p.w + GAP
       }
-      y += H_ROW + 3 * k
+      y += H_ROW + 4 * k
     }
 
-    // Mark label near its moment.
-    const mark = r.clip.marks.find((m) => Math.abs(m.t - t) < 0.75 * r.tickrate)
+    // Mark label: the latest labelled mark stays until the next one, so notes change as the clip
+    // plays. A focus diamond leads it; long labels wrap within the canvas (see wrap).
+    let mark: (typeof r.clip.marks)[number] | undefined
+    for (const m of r.clip.marks) if (m.label && m.t <= t && (!mark || m.t >= mark.t)) mark = m
     if (mark?.label) {
-      font(12, 600)
-      const w = g.measureText(mark.label).width
-      pill(pad, H - pad - 24 * k, w + 16 * k, 24 * k)
+      font(12, 500)
+      const LINE = 16 * k
+      const lines = wrap(mark.label, W - 2 * pad - 30 * k, MARK_LINES, (s) => g.measureText(s).width)
+      const w = Math.max(...lines.map((l) => g.measureText(l).width)) + 30 * k
+      const h = 6 * k + lines.length * LINE
+      const top = H - pad - h
+      pill(pad, top, w, h, 'rgba(20,23,28,.9)')
+      g.save()
+      g.translate(pad + 10 * k, top + 3 * k + LINE / 2)
+      g.rotate(Math.PI / 4)
       g.fillStyle = this.theme.me
-      g.fillText(mark.label, pad + 8 * k, H - pad - 12 * k)
+      g.fillRect(-3 * k, -3 * k, 6 * k, 6 * k)
+      g.restore()
+      g.fillStyle = this.theme.fg
+      lines.forEach((l, i) => g.fillText(l, pad + 19 * k, top + 3 * k + LINE * (i + 0.5)))
     }
     g.textBaseline = 'alphabetic'
   }
