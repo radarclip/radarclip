@@ -4,7 +4,7 @@
 use ahash::AHashMap;
 use parser::first_pass::parser_settings::{rm_user_friendly_names, ParserInputs};
 use parser::parse_demo::{DemoOutput, Parser, ParsingMode};
-use parser::second_pass::game_events::GameEvent;
+use parser::second_pass::game_events::{EventField, GameEvent};
 use parser::second_pass::parser_settings::create_huffman_lookup_table;
 use parser::second_pass::variants::{VarVec, Variant};
 use radarclip_core::{change_list, Area, encode_track, Clip, Defuse, Detail, Event, Hit, Mark, MatchFile, MatchPlayer, MatchRound, Nade, Player, PlayerDetail, Quant, Sample, Shots, Tolerance, FORMAT, MATCH_FORMAT};
@@ -27,6 +27,8 @@ const TICK_PROPS: &[&str] = &[
     "inventory", "balance", "current_equip_value", "has_helmet", "has_defuser", "approximate_spotted_by",
     // The C4 in hand is arming: CS2 sends no event when a plant is given up.
     "m_bStartedArming",
+    // To rebuild blinds and defuses in demos without those events (see `derive_missing`).
+    "flash_duration", "is_defusing",
 ];
 const NOT_SHOTS: &[&str] = &["smokegrenade", "flashbang", "hegrenade", "incgrenade", "molotov", "decoy", "c4"];
 
@@ -63,6 +65,9 @@ struct Raw {
     kit: bool,
     /// Planting: the C4 in hand is arming.
     arming: bool,
+    /// Length of the last blind in seconds; set anew by each flash.
+    flash: f32,
+    defusing: bool,
     /// Index into `Match::gear`.
     gear: u32,
     /// Index into `Match::seen`.
@@ -384,6 +389,72 @@ fn flights<'a>(rows: impl Iterator<Item = &'a GrenadeRow>) -> Vec<Vec<&'a Grenad
     flights
 }
 
+/// Tournament (GOTV) demos often leave out `player_blind`, `bomb_beginplant`, `bomb_begindefuse`
+/// and `bomb_abortdefuse`. Where a demo has none of a kind, rebuild them from the player samples:
+/// a blind where a player's flash duration changes right after a flash pops (on the pop's tick,
+/// like the real event), a plant start where the C4 starts arming, a defuse start and stop where
+/// the player starts and stops defusing. Times are up to one sample (GRID ticks) late.
+fn derive_missing(events: &mut Vec<GameEvent>, players: &[PlayerInfo], samples: &[Vec<Option<Raw>>]) {
+    let has = |name: &str| events.iter().any(|e| e.name == name);
+    let (blinds, plants, defuses) = (!has("player_blind"), !has("bomb_beginplant"), !has("bomb_begindefuse"));
+    let text = |name: &str, v: &str| EventField { name: name.into(), data: Some(Variant::String(v.into())) };
+    let person = |prefix: &str, p: &PlayerInfo| {
+        let steamid = if p.key.starts_with("bot:") { "0" } else { p.key.as_str() };
+        [text(&format!("{prefix}_steamid"), steamid), text(&format!("{prefix}_name"), &p.name)]
+    };
+    let mut add = vec![];
+    if blinds {
+        // The new duration can reach the demo up to half a second after the pop.
+        const REACH: i32 = 8 * GRID;
+        let pops: Vec<&GameEvent> = events.iter().filter(|e| e.name == "flashbang_detonate").collect();
+        for (p, s) in samples.iter().enumerate() {
+            let mut last = 0.0;
+            for (slot, r) in s.iter().enumerate() {
+                let Some(r) = *r else { continue };
+                let (tick, changed) = (slot as i32 * GRID, r.flash > 0.0 && (r.flash - last).abs() > 1e-3);
+                last = r.flash;
+                // Caused by the last flash that popped before this sample.
+                let i = pops.partition_point(|e| e.tick <= tick);
+                let Some(e) = i.checked_sub(1).map(|i| pops[i]).filter(|e| changed && tick - e.tick <= REACH) else { continue };
+                let mut fields = person("user", &players[p]).to_vec();
+                fields.extend(["user_steamid", "user_name"].map(|f| EventField { name: f.replace("user", "attacker"), data: field(e, f).cloned() }));
+                fields.push(EventField { name: "blind_duration".into(), data: Some(Variant::F32(r.flash)) });
+                add.push(GameEvent { name: "player_blind".into(), fields, tick: e.tick });
+            }
+        }
+    }
+    if plants || defuses {
+        let defused: Vec<i32> = events.iter().filter(|e| e.name == "bomb_defused").map(|e| e.tick).collect();
+        for (p, s) in samples.iter().enumerate() {
+            let mut prev: Option<Raw> = None;
+            for (slot, r) in s.iter().enumerate() {
+                let Some(r) = *r else { continue };
+                let (tick, was) = (slot as i32 * GRID, prev.unwrap_or(r));
+                let mut push = |name: &str, extra: Option<EventField>| {
+                    let mut fields = person("user", &players[p]).to_vec();
+                    fields.extend(extra);
+                    add.push(GameEvent { name: name.into(), fields, tick });
+                };
+                if plants && r.alive && r.arming && !(prev.is_some() && was.arming) {
+                    push("bomb_beginplant", None);
+                }
+                if defuses && r.alive && r.defusing && !(prev.is_some() && was.defusing) {
+                    push("bomb_begindefuse", Some(EventField { name: "haskit".into(), data: Some(Variant::Bool(r.kit)) }));
+                }
+                // A finished defuse ends with bomb_defused, which the attempt already looks for.
+                if defuses && prev.is_some() && was.defusing && !r.defusing && !defused.iter().any(|&d| d > tick - GRID && d <= tick) {
+                    push("bomb_abortdefuse", None);
+                }
+                prev = Some(r);
+            }
+        }
+    }
+    if !add.is_empty() {
+        events.extend(add);
+        events.sort_by_key(|e| e.tick);
+    }
+}
+
 fn intern(table: &mut Vec<String>, index: &mut AHashMap<String, u32>, s: &str) -> u32 {
     if let Some(&i) = index.get(s) {
         return i;
@@ -436,7 +507,7 @@ impl Match {
         // Pass 1: game events (player props attached as user_X, attacker_yaw, …).
         let ev = meter.pass(Stage::Events, 1.0, || pass(bytes, &["X", "Y", "Z", "yaw"], &["is_warmup_period"], EVENTS, vec![], false))?;
         let map = ev.header.as_ref().and_then(|h| h.get("map_name").cloned()).unwrap_or_default();
-        let events = ev.game_events;
+        let mut events = ev.game_events;
         let last_tick = events.iter().map(|e| e.tick).max().unwrap_or(0);
 
         let start = events.iter().filter(|e| e.name == "round_announce_match_start").map(|e| e.tick).max().unwrap_or(0);
@@ -482,6 +553,7 @@ impl Match {
         let (inventory, balance, equip) = (column(&st, "inventory"), column(&st, "balance"), column(&st, "current_equip_value"));
         let (helmet, kit, spotted) = (column(&st, "has_helmet"), column(&st, "has_defuser"), column(&st, "approximate_spotted_by"));
         let arming = column(&st, "m_bStartedArming");
+        let (flash, defusing) = (column(&st, "flash_duration"), column(&st, "is_defusing"));
         let (mut gear, mut gear_ix, mut seen, mut seen_ix) = (vec![], AHashMap::default(), vec![], AHashMap::default());
         let rows = tick.map(var_len).unwrap_or(0);
 
@@ -522,6 +594,8 @@ impl Match {
                     helmet: num_at(helmet, i).map(|v| v > 0.0).unwrap_or(false),
                     kit: num_at(kit, i).map(|v| v > 0.0).unwrap_or(false),
                     arming: num_at(arming, i).map(|v| v > 0.0).unwrap_or(false),
+                    flash: num_at(flash, i).unwrap_or(0.0) as f32,
+                    defusing: num_at(defusing, i).map(|v| v > 0.0).unwrap_or(false),
                     gear: intern_list(&mut gear, &mut gear_ix, strings_at(inventory, i).map(|s| s.to_vec()).unwrap_or_default()),
                     seen: intern_list(&mut seen, &mut seen_ix, u64s_at(spotted, i).unwrap_or_default().iter().filter(|&&s| s != 0).map(|s| s.to_string()).collect()),
                 });
@@ -529,6 +603,7 @@ impl Match {
         }
 
         meter.report(Stage::Players, 1.0);
+        derive_missing(&mut events, &players, &samples);
 
         // Pass 3: grenade projectiles, one row per tick of flight.
         let gr = meter.pass(Stage::Grenades, 1.0, || pass(bytes, &[], &[], &[], vec![], true))?;
@@ -987,5 +1062,60 @@ mod progress_tests {
             assert!((seen.last().unwrap() - 1.0).abs() < 1e-6, "ends at {}", seen.last().unwrap());
             assert!(seen.windows(2).all(|w| w[1] >= w[0] - 1e-6), "not monotonic: {seen:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod derive_tests {
+    use super::*;
+
+    fn raw(flash: f32, arming: bool, defusing: bool) -> Option<Raw> {
+        Some(Raw {
+            x: 0.0, y: 0.0, z: 0.0, yaw: 0.0, hp: 100, armor: 0, alive: true, team: 2, weapon: 0, place: 0, money: 0,
+            equip: 0, helmet: false, kit: true, arming, flash, defusing, gear: 0, seen: 0,
+        })
+    }
+
+    fn event(name: &str, tick: i32, user: &str) -> GameEvent {
+        let text = |n: &str, v: &str| EventField { name: n.into(), data: Some(Variant::String(v.into())) };
+        GameEvent { name: name.into(), fields: vec![text("user_steamid", user), text("user_name", user)], tick }
+    }
+
+    fn names(events: &[GameEvent]) -> Vec<(String, i32, Option<String>)> {
+        events.iter().map(|e| (e.name.clone(), e.tick, fstr(e, "user_steamid").map(String::from))).collect()
+    }
+
+    /// Blinds come from the flash duration changing after a pop, on the pop's tick and credited
+    /// to the thrower; plant and defuse starts and stops from the arming and defusing flags.
+    #[test]
+    fn rebuilds_missing_events_from_player_state() {
+        let players = vec![PlayerInfo { key: "1".into(), name: "a".into() }, PlayerInfo { key: "2".into(), name: "b".into() }];
+        // a: blinded by b's flashes at tick 10 (2.5 s, seen at 20) and 50 (1.8 s, seen at 52), starts
+        // arming at 40. b: defuses from 60 and lets go at 72.
+        let a = vec![raw(0.0, false, false), raw(0.0, false, false), raw(0.0, false, false), raw(0.0, false, false), raw(0.0, false, false),
+            raw(2.5, false, false), raw(2.5, false, false), raw(2.5, false, false), raw(2.5, false, false), raw(2.5, false, false),
+            raw(2.5, true, false), raw(2.5, true, false), raw(2.5, true, false), raw(1.8, true, false), raw(1.8, false, false)];
+        let b: Vec<Option<Raw>> = (0..20).map(|s| raw(0.0, false, (15..18).contains(&s))).collect();
+        let mut events = vec![event("flashbang_detonate", 10, "2"), event("flashbang_detonate", 50, "2")];
+        derive_missing(&mut events, &players, &[a, b]);
+        let blinds: Vec<(i32, f64, Option<&str>)> = events.iter().filter(|e| e.name == "player_blind")
+            .map(|e| (e.tick, (fnum(e, "blind_duration").unwrap() * 10.0).round() / 10.0, fstr(e, "attacker_steamid"))).collect();
+        assert_eq!(blinds, vec![(10, 2.5, Some("2")), (50, 1.8, Some("2"))]);
+        let rest: Vec<_> = names(&events).into_iter().filter(|e| !e.0.contains("blind") && e.0 != "flashbang_detonate").collect();
+        assert_eq!(rest, vec![
+            ("bomb_beginplant".into(), 40, Some("1".into())),
+            ("bomb_begindefuse".into(), 60, Some("2".into())),
+            ("bomb_abortdefuse".into(), 72, Some("2".into())),
+        ]);
+    }
+
+    /// A demo that has the events keeps them as they are.
+    #[test]
+    fn keeps_real_events() {
+        let players = vec![PlayerInfo { key: "1".into(), name: "a".into() }];
+        let samples = vec![(0..10).map(|s| raw(if s > 3 { 2.0 } else { 0.0 }, s > 5, false)).collect()];
+        let mut events = vec![event("flashbang_detonate", 10, "1"), event("player_blind", 10, "1"), event("bomb_beginplant", 22, "1")];
+        derive_missing(&mut events, &players, &samples);
+        assert_eq!(events.len(), 3);
     }
 }
