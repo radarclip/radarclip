@@ -81,7 +81,7 @@ use. It lives next to the clip, not in it, so moments cut from a round stay as s
 
 A moment cut out of a stored round follows the same rules as one cut from the demo: frames from
 the first at or after the start; kills, a plant, smokes or fires still burning, plant and defuse
-attempts still running and the last bomb pickup or drop from earlier in the round stay; hurts, blinds, pops, shots and grenade flights only inside the window. Tracks are
+attempts still running and the last bomb pickup or drop from earlier in the round stay; hurts, blinds, pops, shots, knife swings, Zeus shots and grenade flights only inside the window. Tracks are
 re-encoded from the decoded frames with a 1-unit / 1° tolerance, so positions stay within a unit
 of the stored round. The reference implementation is `radarclip_core::cut`, in the browser
 `cutClip()` from `radarclip-wasm`.

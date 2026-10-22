@@ -1,7 +1,7 @@
 //! Cutting a shorter clip out of a longer one, e.g. a moment out of a stored full round, without
 //! going back to the demo.
 
-use crate::{decode_track, Area, encode_track, Clip, Event, Mark, Nade, Player, Shots, Tolerance};
+use crate::{decode_track, Area, encode_track, Clip, Event, Mark, Nade, Player, Tolerance};
 
 /// What to cut. Times in ticks after the round's freeze end, like everything in a clip.
 #[derive(Debug, Clone, Default)]
@@ -105,18 +105,6 @@ pub fn cut(clip: &Clip, c: &Cut) -> Result<Clip, String> {
         })
         .collect();
 
-    let mut shots = Shots::default();
-    let (mut t, mut prev) = (0i64, 0i64);
-    for (i, dt) in clip.shots.t.iter().enumerate() {
-        t += dt;
-        if (t0..=t1).contains(&t) {
-            shots.t.push(t - prev);
-            prev = t;
-            shots.p.push(clip.shots.p[i]);
-            shots.yaw.push(clip.shots.yaw[i]);
-        }
-    }
-
     Ok(Clip {
         title: c.title.clone().unwrap_or_else(|| clip.title.clone()),
         start: clip.start + first * step,
@@ -127,7 +115,9 @@ pub fn cut(clip: &Clip, c: &Cut) -> Result<Clip, String> {
         players,
         events,
         nades,
-        shots,
+        shots: clip.shots.within(t0, t1),
+        knife: clip.knife.within(t0, t1),
+        zeus: clip.zeus.within(t0, t1),
         ..clip.clone()
     })
 }

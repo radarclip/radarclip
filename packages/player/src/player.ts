@@ -156,6 +156,12 @@ const SMOKE_R = 144 // world units
 const FIRE_R = 120
 const TRACER = 520 // world units drawn for a shot that hit nobody (~13 m)
 const TRACER_LIFE = 0.3 // seconds a shot stays visible
+const KNIFE_REACH = 64 // world units from the swinger's centre to the slash streak (hits measured up to ~94)
+const KNIFE_SPAN = 60 // degrees either side of the aim a slash sweeps (a stab: 40)
+const KNIFE_LIFE = 0.4 // seconds until a streak's tail has caught up with its head
+const KNIFE_NEAR = 300 // world units: a missed swing with no enemy this close is idle, and drawn faint
+const ZEUS_REACH = 183 // world units a Zeus reaches (~4.6 m); a miss stops there
+const ZEUS_LIFE = 0.4 // seconds a Zeus bolt stays visible (flickering for the first 0.15 s)
 const TRAIL = 2.5 // seconds of movement drawn behind a player
 const CONE = 32 // degrees either side of where a player looks
 const CONE_LEN = 7.2 // cone length in player radii (the focus player's: 9.2)
@@ -260,6 +266,12 @@ interface ShotView {
   hit?: number
 }
 
+interface SwingView extends ShotView {
+  stab: boolean
+  /** A miss with no enemy near: an idle swing, drawn faint. */
+  idle: boolean
+}
+
 /**
  * Draws a radarclip on a canvas and plays it back.
  *
@@ -298,6 +310,8 @@ export class RadarclipPlayer {
   private changeListeners = new Set<ChangeListener>()
   private resizeObserver?: ResizeObserver
   private shots: ShotView[] = []
+  private knife: SwingView[] = []
+  private zeus: ShotView[] = []
   private kills: Extract<Event, { type: 'kill' }>[] = []
   private damage: DamageGroup[] = []
   private icons = new Map<string, HTMLImageElement | null>()
@@ -364,6 +378,22 @@ export class RadarclipPlayer {
     const hits = r.events.filter((e): e is Extract<Event, { type: 'hurt' }> => e.type === 'hurt' && !GRENADE_HITS.has(e.weapon))
     const window = 0.07 * r.tickrate
     this.shots = r.shots.map((s) => ({ ...s, hit: hits.find((h) => h.attacker === s.p && Math.abs(h.t - s.t) <= window)?.victim }))
+    const hurt = (s: { t: number; p: number }, weapon: (w: string) => boolean) => hits.find((h) => h.attacker === s.p && weapon(h.weapon) && Math.abs(h.t - s.t) <= window)
+    // Only slashes send weapon_fire; a stab shows as a knife hit that no slash matches.
+    const isKnife = (w: string) => /^(knife|bayonet)/.test(w)
+    const slashes: SwingView[] = r.knife.map((s) => {
+      const h = hurt(s, isKnife)
+      return { ...s, hit: h?.victim, stab: false, idle: !h && !this.enemyNear(r, s.p, s.t, KNIFE_NEAR) }
+    })
+    const stabs: SwingView[] = hits
+      .filter((h) => h.attacker != null && isKnife(h.weapon) && !slashes.some((s) => s.hit === h.victim && s.p === h.attacker && Math.abs(h.t - s.t) <= window))
+      .map((h) => {
+        const a = stateAt(r, h.attacker!, h.t), v = stateAt(r, h.victim, h.t)
+        const yaw = a && v ? (Math.atan2(v.y - a.y, v.x - a.x) * 180) / Math.PI : (a?.yaw ?? 0)
+        return { t: h.t, p: h.attacker!, yaw, hit: h.victim, stab: true, idle: false }
+      })
+    this.knife = [...slashes, ...stabs]
+    this.zeus = r.zeus.map((s) => ({ ...s, hit: hurt(s, (w) => w === 'taser')?.victim }))
     this.kills = r.events.filter((e): e is Extract<Event, { type: 'kill' }> => e.type === 'kill')
     this.damage = this.groupDamage(r)
     this.labelFade.clear()
@@ -743,6 +773,16 @@ export class RadarclipPlayer {
 
   // --- geometry ------------------------------------------------------------------------------
 
+  private enemyNear(r: Replay, p: number, t: number, dist: number) {
+    const me = stateAt(r, p, t), side = r.players[p]?.side
+    if (!me) return false
+    return r.players.some((o, i) => {
+      if (o.side === side) return false
+      const s = stateAt(r, i, t)
+      return !!s && Math.hypot(s.x - me.x, s.y - me.y) <= dist
+    })
+  }
+
   /** World → radar px (1024 × 1024). */
   private px(x: number, y: number): [number, number] {
     const r = this.radar
@@ -1032,6 +1072,97 @@ export class RadarclipPlayer {
       g.stroke()
     }
     g.globalAlpha = 1
+
+    // Knife swings: a tapered streak across the front, thick at its head, sweeping in 0.12 s while
+    // its tail catches up. A hit reaches the victim; a miss is dimmer, an idle one (no enemy near)
+    // dimmer still, but not so faint that it vanishes in the vision cone. A stab is short and thick.
+    for (const sw of this.knife) {
+      const age = (t - sw.t) / sec
+      if (age < 0 || age > KNIFE_LIFE) continue
+      const from = stateAt(r, sw.p, sw.t)
+      if (!from || !this.onFloor(from.z)) continue
+      const v = sw.hit != null ? stateAt(r, sw.hit, sw.t) : null
+      const dot = Math.max(PLAYER_RADIUS / this.radar.scale, MIN_DOT * u)
+      // A hit's streak reaches the victim's edge.
+      const rad = Math.max(v ? Math.hypot(v.x - from.x, v.y - from.y) / this.radar.scale - dot : KNIFE_REACH / this.radar.scale, dot + 6 * u)
+      const span = ((sw.stab ? 40 : KNIFE_SPAN) * Math.PI) / 180
+      const head = easeOut(Math.min(1, age / 0.12)), tail = easeOut(Math.max(0, Math.min(1, (age - 0.08) / 0.3)))
+      // World angles turn the other way on screen (y points down there).
+      const yaw = (-sw.yaw * Math.PI) / 180, a0 = yaw - span + 2 * span * tail, a1 = yaw - span + 2 * span * head
+      if (a1 <= a0) continue
+      const [cx, cy] = this.px(from.x, from.y), wMax = (sw.stab ? 4.2 : 3.2) * u, n = 18
+      g.beginPath()
+      for (let i = 0; i <= n; i++) {
+        const a = a0 + ((a1 - a0) * i) / n, w = (wMax * i) / n / 2
+        g.lineTo(cx + Math.cos(a) * (rad + w), cy + Math.sin(a) * (rad + w))
+      }
+      for (let i = n; i >= 0; i--) {
+        const a = a0 + ((a1 - a0) * i) / n, w = (wMax * i) / n / 2
+        g.lineTo(cx + Math.cos(a) * (rad - w), cy + Math.sin(a) * (rad - w))
+      }
+      g.closePath()
+      g.globalAlpha = v ? 0.95 : sw.idle ? 0.5 : 0.7
+      g.fillStyle = this.color(sw.p)
+      g.fill()
+    }
+    g.globalAlpha = 1
+
+    // Zeus: a jagged bolt, white core in the shooter's colour, flickering for 0.15 s. It ends on
+    // the victim, or at the Zeus's reach with a small fizzle.
+    g.lineJoin = 'round'
+    this.zeus.forEach((z, zi) => {
+      const age = (t - z.t) / sec
+      if (age < 0 || age > ZEUS_LIFE) return
+      const from = stateAt(r, z.p, z.t)
+      if (!from || !this.onFloor(from.z)) return
+      const v = z.hit != null ? stateAt(r, z.hit, z.t) : null
+      const a = (z.yaw * Math.PI) / 180
+      const [x1, y1] = this.px(from.x, from.y)
+      const [x2, y2] = v ? this.px(v.x, v.y) : this.px(from.x + ZEUS_REACH * Math.cos(a), from.y + ZEUS_REACH * Math.sin(a))
+      const len = Math.hypot(x2 - x1, y2 - y1)
+      if (!(len > 0)) return
+      const frame = age < 0.15 ? Math.floor(age / 0.05) : 3
+      const n = Math.max(3, Math.round(len / Math.max(19 / this.radar.scale, 6 * u)))
+      const amp = Math.max(8 / this.radar.scale, 3 * u), nx = -(y2 - y1) / len, ny = (x2 - x1) / len
+      const jitter = (k: number) => {
+        const x = Math.sin((zi * 97 + k * 13 + frame * 7) * 9301 + 49297) * 233280
+        return (x - Math.floor(x) - 0.5) * 2 * amp
+      }
+      const pts: [number, number][] = [[x1, y1]]
+      for (let k = 1; k < n; k++) {
+        const f = k / n, off = jitter(k)
+        pts.push([x1 + (x2 - x1) * f + nx * off, y1 + (y2 - y1) * f + ny * off])
+      }
+      pts.push([x2, y2])
+      const path = () => {
+        g.beginPath()
+        pts.forEach(([x, y], k) => (k ? g.lineTo(x, y) : g.moveTo(x, y)))
+      }
+      const fade = 1 - Math.max(0, Math.min(1, (age - 0.1) / 0.3))
+      path()
+      g.globalAlpha = 0.55 * fade
+      g.lineWidth = 3.4 * u
+      g.strokeStyle = this.color(z.p)
+      g.stroke()
+      path()
+      g.globalAlpha = 0.95 * fade
+      g.lineWidth = 1.1 * u
+      g.strokeStyle = '#fff'
+      g.stroke()
+      if (!v) {
+        const k = Math.min(1, age / 0.35)
+        g.globalAlpha = 0.8 * (1 - k)
+        g.lineWidth = u
+        g.strokeStyle = this.color(z.p)
+        for (let i = 0; i < 4; i++) {
+          const an = (i * Math.PI) / 2 + 0.6, r0 = (1 + 2 * k) * u, r1 = r0 + 2.6 * u
+          line(x2 + Math.cos(an) * r0, y2 + Math.sin(an) * r0, x2 + Math.cos(an) * r1, y2 + Math.sin(an) * r1)
+          g.stroke()
+        }
+      }
+    })
+    g.globalAlpha = 1
+    g.lineJoin = 'miter'
 
     // Plant and defuse attempts: a ring that fills clockwise over the time the attempt needs. An
     // attempt given up stays as a white arc where it stopped, fading out, so fakes show; one that

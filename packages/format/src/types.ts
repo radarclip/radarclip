@@ -25,6 +25,10 @@ export interface Clip {
   events: Event[]
   nades: Nade[]
   shots: Shots
+  /** Knife slashes, hit or miss (stabs send no event; they show as knife hurts); left out when empty. */
+  knife?: Shots
+  /** Zeus shots (not in `shots`); left out when empty. */
+  zeus?: Shots
   radar?: Radar
 }
 

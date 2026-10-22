@@ -93,5 +93,9 @@ export function check(value: unknown): Clip {
   if (c.frame !== undefined && (!Array.isArray(c.frame) || c.frame.some((a) => !a || ![a.x, a.y, a.r].every(Number.isFinite) || a.r < 0))) fail('frame must list areas {x, y, r}')
   const s = c.shots
   if (!s || s.t.length !== s.p.length || s.t.length !== s.yaw.length) fail('shots arrays differ in length')
+  for (const key of ['knife', 'zeus'] as const) {
+    const o = c[key]
+    if (o !== undefined && (!o || [o.p, o.yaw].some((a) => !Array.isArray(a) || !Array.isArray(o.t) || a.length !== o.t.length))) fail(`${key} arrays differ in length`)
+  }
   return c
 }
