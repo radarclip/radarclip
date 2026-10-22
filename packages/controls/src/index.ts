@@ -109,10 +109,14 @@ export class RadarclipControlsElement extends HTMLElement {
     })
     on('keydown', (e) => this.key(e as KeyboardEvent))
     if (!el.hasAttribute('tabindex')) el.tabIndex = 0
-    if (el.player.replay) {
+    // With the controls defined first, the player may not be upgraded yet: show it once it is.
+    const show = () => {
+      if (this._target !== el || !el.player?.replay) return
       this.loaded(el.player.state)
       this.sync(el.player.state)
     }
+    if (el.player) show()
+    else void customElements.whenDefined(el.localName).then(show)
   }
 
   private detach() {
