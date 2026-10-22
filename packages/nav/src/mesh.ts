@@ -33,6 +33,16 @@ export interface Route {
   length: number
 }
 
+/** Walking distances from anywhere on the mesh to one goal, worked out once. */
+export interface DistanceField {
+  /**
+   * The walk from `p` to the goal in world units, close to `route(p, goal).length` (a few percent
+   * shorter, mostly: a straighter way); undefined when `p` is off the mesh or no way leads from it
+   * to the goal.
+   */
+  at(p: Point): number | undefined
+}
+
 /**
  * The game's top running speed with the knife out, in units per second. Rifles run at 215–225,
  * the AWP at 200. `route.length / RUN_SPEED` is the fastest someone can get there.
@@ -50,6 +60,8 @@ const JUMP = 66
 const DROP = 250
 /** Areas this close (ground plane) but unlinked count as a jump or drop apart. */
 const GAP = 20
+/** Most room between two spots of a doorway in `distancesTo`. */
+const DOOR_STEP = 64
 
 /** A map's walkable areas, how they connect, and routes through them. */
 export class NavMesh {
@@ -61,7 +73,13 @@ export class NavMesh {
   private zmax: Float64Array
   /** Links by area index; `spot` marks a ladder or jump, `climb` the ladder's length. */
   private out: { to: number; edge: number; w: number; spot?: Vec2; climb?: number }[][]
+  /** Ground-plane bounds by area index: x0, y0, x1, y1. */
+  private box: Float64Array
   private cells = new Map<number, number[]>()
+  /** Marks areas already looked at in `locate`, by the call's number. */
+  private seen: Uint32Array
+  private visit = 0
+  private doors?: Doors
 
   constructor(areas: NavArea[], readonly ladders: readonly Ladder[] = []) {
     this.areas = areas
@@ -70,6 +88,8 @@ export class NavMesh {
     this.cy = new Float64Array(n)
     this.zmin = new Float64Array(n).fill(Infinity)
     this.zmax = new Float64Array(n).fill(-Infinity)
+    this.box = new Float64Array(4 * n)
+    this.seen = new Uint32Array(n)
     areas.forEach((a, i) => {
       this.index.set(a.id, i)
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
@@ -80,6 +100,7 @@ export class NavMesh {
         this.zmax[i] = Math.max(this.zmax[i], z)
         x0 = Math.min(x0, x), y0 = Math.min(y0, y), x1 = Math.max(x1, x), y1 = Math.max(y1, y)
       }
+      this.box.set([x0, y0, x1, y1], 4 * i)
       for (let gx = Math.floor(x0 / CELL); gx <= Math.floor(x1 / CELL); gx++) {
         for (let gy = Math.floor(y0 / CELL); gy <= Math.floor(y1 / CELL); gy++) {
           const k = cellKey(gx, gy), list = this.cells.get(k)
@@ -212,18 +233,112 @@ export class NavMesh {
     return { areas: corridor.map(i => this.areas[i].id), points, length }
   }
 
+  /**
+   * Walking distances to a point, or to the nearest of a set of areas (as in `route`), for any
+   * number of starts: one search backwards from the goal instead of one `route` per start, so
+   * links count only their way. It walks straight from doorway to doorway, through spots along
+   * each (its ends and every `DOOR_STEP` between; a ladder or jump has one), which comes close
+   * to the corner-cutting line `route` draws.
+   */
+  distancesTo(goal: Point | Iterable<number>): DistanceField {
+    const d = (this.doors ??= this.buildDoors())
+    const isGoal = new Uint8Array(this.areas.length)
+    let target: Vec2 | undefined
+    if (isPoint(goal)) {
+      const g = this.locate(goal, 120)
+      if (g < 0) return { at: () => undefined }
+      isGoal[g] = 1
+      target = [goal.x, goal.y]
+    } else {
+      for (const id of goal) {
+        const i = this.index.get(id)
+        if (i !== undefined) isGoal[i] = 1
+      }
+    }
+    // Into a set of areas the walk ends on the doorway's nearest point; to a point it goes on.
+    const ends = (k: number) => !target && isGoal[d.to[k]] === 1
+    // dist[v]: from the doorway spot v to the goal, not counting its door's ladder.
+    const dist = new Float64Array(d.x.length).fill(Infinity)
+    const heap = new Heap()
+    for (let k = 0; k < d.from.length; k++) {
+      if (!isGoal[d.to[k]] || isGoal[d.from[k]]) continue
+      for (let v = d.first[k]; v < d.first[k + 1]; v++) {
+        dist[v] = target ? Math.hypot(target[0] - d.x[v], target[1] - d.y[v]) : 0
+        heap.push(v, dist[v])
+      }
+    }
+    while (heap.size) {
+      const [v, dv] = heap.pop()
+      if (dv > dist[v]) continue
+      const k = d.door[v]
+      // Every spot of every doorway into k's area leads on through v.
+      for (const j of d.into[d.from[k]]) {
+        if (isGoal[d.from[j]]) continue
+        for (let u = d.first[j]; u < d.first[j + 1]; u++) {
+          const [ex, ey] = ends(k) ? d.nearest(k, d.x[u], d.y[u]) : [d.x[v], d.y[v]]
+          const du = dv + d.climb[k] + Math.hypot(ex - d.x[u], ey - d.y[u])
+          if (du < dist[u]) (dist[u] = du), heap.push(u, du)
+        }
+      }
+    }
+    return {
+      at: (p) => {
+        const s = this.locate(p, 120)
+        if (s < 0) return undefined
+        if (isGoal[s]) return target ? Math.hypot(target[0] - p.x, target[1] - p.y) : 0
+        let best = Infinity
+        for (const k of d.outOf[s]) {
+          for (let v = d.first[k]; v < d.first[k + 1]; v++) {
+            if (dist[v] === Infinity) continue
+            const [ex, ey] = ends(k) ? d.nearest(k, p.x, p.y) : [d.x[v], d.y[v]]
+            best = Math.min(best, Math.hypot(ex - p.x, ey - p.y) + d.climb[k] + dist[v])
+          }
+        }
+        return best === Infinity ? undefined : best
+      },
+    }
+  }
+
+  /**
+   * Every link as a doorway, numbered, with spots along it: its ends, where a tight line bends,
+   * and enough between them that a straight walk through it passes near one.
+   */
+  private buildDoors(): Doors {
+    const d: Doors = { from: [], to: [], climb: [], first: [], outOf: [], into: [], door: [], x: [], y: [], nearest: () => [0, 0] }
+    const ends: [Vec2, Vec2][] = []
+    d.outOf = this.areas.map(() => [])
+    d.into = this.areas.map(() => [])
+    this.out.forEach((links, a) => {
+      for (const l of links) {
+        const [p, q] = this.portal(a, l.to), k = d.from.length
+        d.from.push(a), d.to.push(l.to), d.climb.push(l.climb ?? 0), d.first.push(d.x.length)
+        d.outOf[a].push(k), d.into[l.to].push(k)
+        ends.push([p, q])
+        const n = Math.ceil(Math.hypot(q[0] - p[0], q[1] - p[1]) / DOOR_STEP)
+        for (let i = 0; i <= n; i++) d.door.push(k), d.x.push(p[0] + ((q[0] - p[0]) * i) / (n || 1)), d.y.push(p[1] + ((q[1] - p[1]) * i) / (n || 1))
+      }
+    })
+    d.first.push(d.x.length)
+    d.nearest = (k, x, y) => closestOnSegment([x, y], ends[k][0], ends[k][1])
+    return d
+  }
+
   private locate(p: Point, maxDistance: number): number {
     let best = -1, bestScore = Infinity
-    const r = Math.ceil(maxDistance / CELL), gx = Math.floor(p.x / CELL), gy = Math.floor(p.y / CELL)
-    const seen = new Set<number>()
-    for (let x = gx - r; x <= gx + r; x++) {
-      for (let y = gy - r; y <= gy + r; y++) {
+    const visit = ++this.visit, box = this.box
+    const x0 = Math.floor((p.x - maxDistance) / CELL), x1 = Math.floor((p.x + maxDistance) / CELL)
+    const y0 = Math.floor((p.y - maxDistance) / CELL), y1 = Math.floor((p.y + maxDistance) / CELL)
+    for (let x = x0; x <= x1; x++) {
+      for (let y = y0; y <= y1; y++) {
         for (const i of this.cells.get(cellKey(x, y)) ?? []) {
-          if (seen.has(i)) continue
-          seen.add(i)
-          const flat = distanceToPolygon(this.areas[i].corners, p.x, p.y)
+          if (this.seen[i] === visit) continue
+          this.seen[i] = visit
           const rise = p.z < this.zmin[i] ? this.zmin[i] - p.z : p.z > this.zmax[i] ? p.z - this.zmax[i] : 0
-          const score = Math.hypot(flat, rise)
+          // No nearer than its bounds: skip what can't beat the best so far.
+          const bx = Math.max(box[4 * i] - p.x, 0, p.x - box[4 * i + 2]), by = Math.max(box[4 * i + 1] - p.y, 0, p.y - box[4 * i + 3])
+          const least = Math.hypot(bx, by, rise)
+          if (least >= bestScore || least > maxDistance) continue
+          const score = Math.hypot(distanceToPolygon(this.areas[i].corners, p.x, p.y), rise)
           if (score < bestScore) (bestScore = score), (best = i)
         }
       }
@@ -312,6 +427,22 @@ export class NavMesh {
   }
 }
 
+/** Doorways by number: the areas they join, any ladder climbed, and their spots (`first[k]` on). */
+interface Doors {
+  from: number[]
+  to: number[]
+  climb: number[]
+  first: number[]
+  outOf: number[][]
+  into: number[][]
+  /** Spots: their doorway and position. */
+  door: number[]
+  x: number[]
+  y: number[]
+  /** A doorway's nearest point to somewhere. */
+  nearest(k: number, x: number, y: number): Vec2
+}
+
 const cellKey = (x: number, y: number) => (x + 32768) * 65536 + (y + 32768)
 const isPoint = (v: Point | Iterable<number>): v is Point => typeof (v as Point).x === 'number'
 const mid = (p: Vec2, q: Vec2): Vec2 => [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2]
@@ -346,10 +477,11 @@ function nearestPoints(a: Vec3[], b: Vec3[]): { gap: number; dz: number; at: Vec
 function distanceToPolygon(poly: Vec3[], x: number, y: number): number {
   let inside = false, best = Infinity
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const [xi, yi] = poly[i], [xj, yj] = poly[j]
+    const xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1]
     if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside
-    const c = closestOnSegment([x, y], [xj, yj], [xi, yi])
-    best = Math.min(best, Math.hypot(c[0] - x, c[1] - y))
+    const dx = xi - xj, dy = yi - yj, len2 = dx * dx + dy * dy
+    const t = len2 ? Math.max(0, Math.min(1, ((x - xj) * dx + (y - yj) * dy) / len2)) : 0
+    best = Math.min(best, Math.hypot(xj + dx * t - x, yj + dy * t - y))
   }
   return inside ? 0 : best
 }
