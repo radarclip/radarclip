@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { areasNamed, labelAreas, parseNav } from '../src/index.js'
+import { areasNamed, labelAreas, parseNav, type Point, type Vec3 } from '../src/index.js'
 import { square, writeNav } from './write.js'
 
 // An L of three 200-unit squares: 1 → 2 east, 2 → 3 north. Edges: 0 south, 1 east, 2 north, 3 west.
@@ -88,6 +88,44 @@ describe('route', () => {
   })
 })
 
+describe('distancesTo', () => {
+  it('measures the walk route() takes, corner cut', () => {
+    const nav = parseNav(writeNav(L()))
+    const from = { x: 20, y: 100, z: 0 }, to = { x: 300, y: 380, z: 0 }
+    expect(nav.distancesTo(to).at(from)).toBeCloseTo(nav.route(from, to)!.length)
+    expect(nav.distancesTo(to).at({ x: 250, y: 300, z: 0 })).toBeCloseTo(Math.hypot(50, 80))
+    // Into a set of areas, straight for the doorway's nearest point (route() heads for its middle).
+    expect(nav.distancesTo([3]).at({ x: 100, y: 100, z: 0 })).toBeCloseTo(Math.hypot(100, 100))
+    expect(nav.distancesTo([3]).at({ x: 300, y: 300, z: 0 })).toBe(0)
+  })
+
+  it('follows one-way links only their way', () => {
+    // A ledge 100 above the floor: the drop is linked, the way back up is not.
+    const nav = parseNav(writeNav([square(1, 0, 0, 200, 100, [{ to: 2, edge: 1 }]), square(2, 200, 0, 200, 0)]))
+    const ledge = { x: 100, y: 100, z: 100 }, floor = { x: 300, y: 100, z: 0 }
+    expect(nav.distancesTo(floor).at(ledge)).toBeCloseTo(200)
+    expect(nav.distancesTo(ledge).at(floor)).toBeUndefined()
+    expect(nav.distancesTo([2]).at(ledge)).toBeCloseTo(100)
+    expect(nav.distancesTo([1]).at(floor)).toBeUndefined()
+  })
+
+  it('climbs ladders and counts the climb', () => {
+    const areas = [square(1, 0, 0, 200, 0), square(2, 0, 400, 200, 300)]
+    const nav = parseNav(writeNav(areas, [{ top: [100, 300, 300], bottom: [100, 300, 0], length: 300, topAreas: [2], bottomAreas: [1] }]))
+    const low = { x: 100, y: 100, z: 0 }, high = { x: 100, y: 500, z: 300 }
+    expect(nav.distancesTo(high).at(low)).toBeCloseTo(nav.route(low, high)!.length)
+    expect(nav.distancesTo(low).at(high)).toBeCloseTo(400 + 300)
+  })
+
+  it('has nothing for points off the mesh or cut off from the goal', () => {
+    const nav = parseNav(writeNav([...L(), square(4, 1000, 0, 200, 0)]))
+    expect(nav.distancesTo([3]).at({ x: 5000, y: 0, z: 0 })).toBeUndefined()
+    expect(nav.distancesTo([3]).at({ x: 1100, y: 100, z: 0 })).toBeUndefined()
+    expect(nav.distancesTo({ x: 5000, y: 0, z: 0 }).at({ x: 100, y: 100, z: 0 })).toBeUndefined()
+    expect(nav.distancesTo([]).at({ x: 100, y: 100, z: 0 })).toBeUndefined()
+  })
+})
+
 describe('labelAreas', () => {
   it('names areas by majority and fills the ones nobody stood on', () => {
     const nav = parseNav(writeNav([...L(), square(4, 400, 200, 200, 0, [{ to: 3, edge: 3 }])]))
@@ -123,5 +161,40 @@ describe.skipIf(!dir)('real maps', () => {
     const tSpawnToCtSpawn = mirage.route({ x: 1216, y: -208, z: -160 }, { x: -1720, y: -1896, z: -264 })!
     expect(tSpawnToCtSpawn.length).toBeGreaterThan(3000)
     expect(tSpawnToCtSpawn.length).toBeLessThan(5000)
+  })
+
+  it('gives distances on Nuke close to route() lengths', () => {
+    const nuke = parseNav(readFileSync(join(dir!, 'de_nuke.nav')))
+    const centre = (a: { corners: Vec3[] }) => {
+      const n = a.corners.length, sum = (k: number) => a.corners.reduce((v, c) => v + c[k], 0) / n
+      return { x: sum(0), y: sum(1), z: sum(2) }
+    }
+    const near = (p: Point, r: number) => nuke.areas.filter(a => {
+      const c = centre(a)
+      return Math.hypot(c.x - p.x, c.y - p.y) < r && Math.abs(c.z - p.z) < 100
+    }).map(a => a.id)
+    // Upper A, lower B (stacked under it), T spawn, CT spawn, outside, ramp.
+    const spots = [
+      { x: 640, y: -760, z: -415 }, { x: 600, y: -900, z: -770 }, { x: -1840, y: -1070, z: -410 },
+      { x: 2600, y: -980, z: -410 }, { x: 1050, y: -2300, z: -410 }, { x: 800, y: 200, z: -640 },
+    ]
+    const errors: number[] = []
+    for (const [g, goal] of spots.entries()) {
+      for (const target of [goal, near(goal, 300)]) {
+        const field = nuke.distancesTo(target)
+        for (let k = g; k < nuke.areas.length; k += 23) {
+          const p = centre(nuke.areas[k]), r = nuke.route(p, target), d = field.at(p)
+          expect(d === undefined, `area ${nuke.areas[k].id}`).toBe(r === undefined)
+          if (r && d !== undefined && r.length > 300) errors.push((d - r.length) / r.length)
+        }
+      }
+    }
+    const abs = errors.map(Math.abs).sort((a, b) => a - b)
+    expect(errors.length).toBeGreaterThan(1000)
+    expect(abs[Math.floor(abs.length / 2)]).toBeLessThan(0.04)
+    expect(abs[Math.floor(abs.length * 0.9)]).toBeLessThan(0.12)
+    // Shorter than route() where its corridor (centre to centre) misses a straighter way.
+    expect(Math.max(...errors)).toBeLessThan(0.3)
+    expect(Math.min(...errors)).toBeGreaterThan(-0.5)
   })
 })

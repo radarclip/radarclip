@@ -14,6 +14,9 @@ const siteB = areasNamed(labels, 'BombsiteB')
 
 const r = nav.route(player, siteB)      // ends where the walk first enters the site
 if (r) console.log(`${(r.length / RUN_SPEED).toFixed(1)} s at the earliest`)
+
+const toB = nav.distancesTo(siteB)     // one search, then any number of lookups
+toB.at(player)                         // same walk in units, no line drawn
 ```
 
 - `parseNav(bytes)` reads a `.nav` file (versions 31–36; the game ships 36) into a `NavMesh`.
@@ -23,6 +26,11 @@ if (r) console.log(`${(r.length / RUN_SPEED).toFixed(1)} s at the earliest`)
   like a player does (string pulling through the doorways between areas), climbs ladders, and
   takes jumps onto boxes and drops off ledges the mesh itself leaves unlinked (never through a
   floor: on Nuke, A sits right above B).
+- `nav.distancesTo(goal)`: the walking distance from anywhere to one goal (a point or a set of
+  areas, as for `route`), worked out by one search backwards from it. `field.at(point)` then
+  answers without searching: use it when many starts share a goal and no line is needed. It
+  walks from doorway to doorway, and its spots (every 64 units along a doorway) stand in for
+  `route`'s corner cutting.
 - `RUN_SPEED` is 250 units/s, the top speed with the knife out, so `length / RUN_SPEED` is the
   fastest anyone can get there. Rifles run at 215–225, the AWP at 200.
 - `labelAreas(nav, samples)` names each area after the callout players had on it (majority) and
@@ -44,7 +52,13 @@ Measured on 8 matches (Mirage, Nuke, Inferno, Ancient, Anubis, Cache):
   percentile 0.94–1.16).
 - As a lower bound it holds: of 20,000 trips to a bomb site, 99.6% took at least the route's
   time at `RUN_SPEED` (Anubis 97.7%, where some shortcut is still missing).
-- A route takes about 0.1 ms; reading a map 40–130 ms.
+- A route takes about 0.1 ms; reading a map 40–130 ms; a distance field 10–20 ms, then 4–8 µs
+  per lookup.
+- Distance fields against route lengths over 300 units (6 maps, 10,000 starts, goals both points
+  and sets of areas): median −2%, 10th–90th percentile −8% to +1.4%. The field is mostly the
+  shorter, truer walk: `route` picks its corridor centre to centre and heads for the middle of a
+  site's doorway. A few routes on Ancient come out shorter than their corridor allows (a
+  straight line across a bend).
 
 Not modelled: doors, breakable walls and vents, boosts onto teammates, jump-throws and anything
 else a player does beyond running, jumping, dropping and climbing.
