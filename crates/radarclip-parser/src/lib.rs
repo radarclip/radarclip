@@ -849,6 +849,7 @@ impl Match {
 
         let mut events = vec![];
         let mut shots: Vec<(i64, u32, i64)> = vec![];
+        let (mut knife, mut zeus): (Vec<(i64, u32, i64)>, Vec<(i64, u32, i64)>) = (vec![], vec![]);
         for e in &self.events {
             let t = rel(e.tick);
             match e.name.as_str() {
@@ -913,11 +914,16 @@ impl Match {
                 "bomb_exploded" if inside(e) => events.push(Event::Explode { t, by: who(e, "user") }),
                 "weapon_fire" if inside(e) => {
                     let w = fstr(e, "weapon").unwrap_or_default().trim_start_matches("weapon_");
-                    if NOT_SHOTS.contains(&w) || w.starts_with("knife") || w == "bayonet" {
+                    if NOT_SHOTS.contains(&w) {
                         continue;
                     }
                     if let Some(p) = who(e, "user") {
-                        shots.push((t, p, fnum(e, "user_yaw").unwrap_or(0.0).round() as i64));
+                        let row = (t, p, fnum(e, "user_yaw").unwrap_or(0.0).round() as i64);
+                        match w {
+                            _ if w.starts_with("knife") || w == "bayonet" => knife.push(row),
+                            "taser" => zeus.push(row),
+                            _ => shots.push(row),
+                        }
                     }
                 }
                 _ => {}
@@ -945,15 +951,6 @@ impl Match {
             }
         }
         events.sort_by_key(|e| e.t());
-        shots.sort_by_key(|s| s.0);
-        let mut out_shots = Shots::default();
-        let mut prev = 0;
-        for (t, p, yaw) in shots {
-            out_shots.t.push(t - prev);
-            prev = t;
-            out_shots.p.push(p);
-            out_shots.yaw.push(yaw);
-        }
 
         // Grenade flights in the window: ~16 points a second is plenty for a curve.
         let mut nades = vec![];
@@ -994,7 +991,9 @@ impl Match {
             players,
             events,
             nades,
-            shots: out_shots,
+            shots: Shots::encode(shots),
+            knife: Shots::encode(knife),
+            zeus: Shots::encode(zeus),
         };
         Ok(Keyed { clip, keys, ticks, members: member_ix })
     }

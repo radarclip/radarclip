@@ -102,3 +102,30 @@ describe('radarclip-match/1', () => {
     await expect(readMatch(JSON.stringify({ ...JSON.parse(text), format: 'radarclip-match/2' }))).rejects.toThrow(/newer reader/)
   })
 })
+
+describe('knife and zeus', () => {
+  const text = readFileSync(join(dir, fixtures[0]), 'utf8')
+
+  it('decode to empty lists when a clip has none', async () => {
+    const clip = await readClip(text)
+    delete clip.knife
+    delete clip.zeus
+    const r = decode(clip)
+    expect([r.knife, r.zeus]).toEqual([[], []])
+  })
+
+  it('decode Δ-coded like shots', async () => {
+    const clip = await readClip(text)
+    clip.knife = { t: [100, 30], p: [0, 1], yaw: [90, -45] }
+    clip.zeus = { t: [400], p: [2], yaw: [180] }
+    const r = decode(clip)
+    expect(r.knife).toEqual([{ t: 100, p: 0, yaw: 90 }, { t: 130, p: 1, yaw: -45 }])
+    expect(r.zeus).toEqual([{ t: 400, p: 2, yaw: 180 }])
+  })
+
+  it('are checked like shots', async () => {
+    const clip = JSON.parse(text)
+    clip.knife = { t: [1, 2], p: [0], yaw: [0, 0] }
+    await expect(readClip(JSON.stringify(clip))).rejects.toThrow('knife arrays differ in length')
+  })
+})

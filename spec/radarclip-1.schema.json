@@ -77,6 +77,8 @@
         "yaw": {"$ref": "#/$defs/ints"}
       }
     },
+    "knife": {"$ref": "#/properties/shots", "description": "Knife slashes, hit or miss; optional (stabs show only as knife hurts)"},
+    "zeus": {"$ref": "#/properties/shots", "description": "Zeus shots; optional"},
     "radar": {
       "type": "object",
       "required": ["pos_x", "pos_y", "scale"],

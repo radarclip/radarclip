@@ -155,6 +155,13 @@ pub struct Clip {
     pub events: Vec<Event>,
     pub nades: Vec<Nade>,
     pub shots: Shots,
+    /// Knife slashes, hit or miss; same shape as `shots`. Stabs send no `weapon_fire`: they show
+    /// only as knife hurts.
+    #[serde(default, skip_serializing_if = "Shots::is_empty")]
+    pub knife: Shots,
+    /// Zeus shots; same shape as `shots`, which leaves them out.
+    #[serde(default, skip_serializing_if = "Shots::is_empty")]
+    pub zeus: Shots,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -334,6 +341,42 @@ pub struct Shots {
     pub t: Vec<i64>,
     pub p: Vec<u32>,
     pub yaw: Vec<i64>,
+}
+
+impl Shots {
+    pub fn is_empty(&self) -> bool {
+        self.t.is_empty()
+    }
+
+    /// Δ-codes `(t, p, yaw)` rows sorted by `t`.
+    pub fn encode(mut rows: Vec<(i64, u32, i64)>) -> Shots {
+        rows.sort_by_key(|s| s.0);
+        let mut out = Shots::default();
+        let mut prev = 0;
+        for (t, p, yaw) in rows {
+            out.t.push(t - prev);
+            prev = t;
+            out.p.push(p);
+            out.yaw.push(yaw);
+        }
+        out
+    }
+
+    /// The rows with `t` inside `t0..=t1`, Δ-coded again.
+    pub fn within(&self, t0: i64, t1: i64) -> Shots {
+        let mut out = Shots::default();
+        let (mut t, mut prev) = (0i64, 0i64);
+        for (i, dt) in self.t.iter().enumerate() {
+            t += dt;
+            if (t0..=t1).contains(&t) {
+                out.t.push(t - prev);
+                prev = t;
+                out.p.push(self.p[i]);
+                out.yaw.push(self.yaw[i]);
+            }
+        }
+        out
+    }
 }
 
 /// One player at one frame, as read from the demo.

@@ -60,7 +60,9 @@ Browsers decode `.radarclip` with `new DecompressionStream("deflate-raw")`.
   "players": [ … ],
   "events": [ … ],
   "nades": [ … ],
-  "shots": { … }
+  "shots": { … },
+  "knife": { … },              // optional: knife slashes
+  "zeus": { … }                // optional: Zeus shots
 }
 ```
 
@@ -155,8 +157,17 @@ quadruples of the projectile's flight.
 {"t": [3001, 8, 7, …], "p": [0, 0, 4, …], "yaw": [-68, -67, 91, …]}
 ```
 
-Every bullet fired (no grenades, knife or C4): `t` Δ-coded, `p` the shooter, `yaw` the aim in
-whole degrees. The shooter's position comes from their track at `t`.
+Every bullet fired (no grenades, knife, Zeus or C4): `t` Δ-coded, `p` the shooter, `yaw` the aim
+in whole degrees. The shooter's position comes from their track at `t`.
+
+## Knife and Zeus
+
+Optional, left out when empty; same shape as `shots`. `knife` holds every slash, hit or miss;
+`zeus` every Zeus shot (which `shots` leaves out). Stabs aren't in `knife`: the game sends no
+`weapon_fire` for them, so a stab only shows as a `hurt` with weapon `knife…` that no slash from
+the same player matches (a slash's `hurt` comes on the same tick). Whether a slash or a Zeus shot
+hit comes from a `hurt` from the same player with weapon `knife…` or `taser`. Readers that
+don't know these keys skip them; clips written before them carry a Zeus shot in `shots`.
 
 ## Radar
 

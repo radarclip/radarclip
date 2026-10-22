@@ -1,7 +1,7 @@
 //! Cutting a moment out of a stored full round must give what cutting from the demo gives:
 //! the same positions (within a unit), the same window rules for events.
 
-use radarclip_core::{cut, decode_track, Area, Clip, Cut, Event};
+use radarclip_core::{cut, decode_track, Area, Clip, Cut, Event, Shots};
 
 fn nuke() -> Clip {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../spec/fixtures/nuke-r2-full.radarclip.json");
@@ -129,4 +129,23 @@ fn keeps_a_plant_attempt_while_it_runs() {
     let has = |from, to| cut(&round, &Cut { from, to, ..Default::default() }).unwrap().events.contains(&attempt);
     assert!(has(t + 64, t + 128));
     assert!(!has(until + 64, until + 640));
+}
+
+/// Knife swings and Zeus shots are optional: absent in older clips, left out when empty, and cut
+/// to the window like shots.
+#[test]
+fn knife_and_zeus_are_optional_and_cut_to_the_window() {
+    let mut round = nuke();
+    round.knife = Shots::default();
+    round.zeus = Shots::default();
+    let json = serde_json::to_string(&round).unwrap();
+    assert!(!json.contains("\"knife\":{") && !json.contains("\"zeus\":{"), "empty keys written");
+    let tr = round.tickrate as i64;
+    round.knife = Shots::encode(vec![(12 * tr, 0, 90), (5 * tr, 1, -45), (30 * tr, 2, 180)]);
+    round.zeus = Shots::encode(vec![(18 * tr, 3, 0)]);
+    let back: Clip = serde_json::from_str(&serde_json::to_string(&round).unwrap()).unwrap();
+    assert_eq!((&back.knife, &back.zeus), (&round.knife, &round.zeus));
+    let part = cut(&round, &Cut { from: 10 * tr, to: 20 * tr, ..Default::default() }).unwrap();
+    assert_eq!(part.knife, Shots { t: vec![12 * tr], p: vec![0], yaw: vec![90] });
+    assert_eq!(part.zeus, Shots { t: vec![18 * tr], p: vec![3], yaw: vec![0] });
 }

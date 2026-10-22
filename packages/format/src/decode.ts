@@ -1,4 +1,4 @@
-import type { Clip, Event, Nade, Side, Track } from './types.js'
+import type { Clip, Event, Nade, Shots, Side, Track } from './types.js'
 
 export interface DecodedPlayer {
   index: number
@@ -48,6 +48,10 @@ export interface Replay {
   events: Event[]
   nades: DecodedNade[]
   shots: Shot[]
+  /** Knife swings; empty when the clip has none. */
+  knife: Shot[]
+  /** Zeus shots; empty when the clip has none. */
+  zeus: Shot[]
 }
 
 export interface PlayerState {
@@ -141,11 +145,14 @@ export function decode(clip: Clip): Replay {
     }
     return out
   })
-  let t = 0
-  const shots = clip.shots.t.map((dt, i) => ({ t: (t += dt), p: clip.shots.p[i], yaw: clip.shots.yaw[i] }))
+  const rows = (s: Shots | undefined): Shot[] => {
+    let t = 0
+    return s ? s.t.map((dt, i) => ({ t: (t += dt), p: s.p[i], yaw: s.yaw[i] })) : []
+  }
   return {
     clip, tickrate: clip.tickrate, start: clip.start, end: clip.start + (n - 1) * clip.step, step: clip.step, frames: n,
-    players, events: [...clip.events].sort((a, b) => a.t - b.t), nades, shots,
+    players, events: [...clip.events].sort((a, b) => a.t - b.t), nades,
+    shots: rows(clip.shots), knife: rows(clip.knife), zeus: rows(clip.zeus),
   }
 }
 
