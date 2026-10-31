@@ -17,10 +17,24 @@ const CSS = `
   button svg { pointer-events: none; }
   button[hidden] { display: none; }
   .time { font: 500 12px/1 "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; color: var(--radarclip-muted, #9aa3ae); min-width: 52px; text-align: right; }
-  .track { position: relative; flex: 1; min-width: 60px; height: 30px; display: flex; align-items: center; }
-  input { width: 100%; margin: 0; accent-color: var(--radarclip-me, #9d8cff); }
-  .mark { position: absolute; top: 2px; width: 2px; height: 7px; border-radius: 1px; background: var(--radarclip-me, #9d8cff);
-    pointer-events: none; transform: translateX(-1px); }
+  /* The knob is drawn here, not by the browser, so its width is known: its centre runs from
+     thumb/2 to 100% − thumb/2, and the rail's fill and the marks use the same formula. The rail
+     sits under the marks and the input on top of both, so only its knob shows. */
+  .track { --thumb: 24px; position: relative; flex: 1; min-width: 60px; height: 30px; display: flex; align-items: center; }
+  .rail { --at: calc(var(--thumb) / 2 + var(--f, 0) * (100% - var(--thumb))); position: absolute; left: 0; right: 0;
+    top: calc(50% - 3px); height: 6px; border-radius: 3px; pointer-events: none; background: linear-gradient(to right,
+    var(--radarclip-me, #9d8cff) var(--at), color-mix(in srgb, var(--radarclip-fg, #e8ebef) 18%, transparent) var(--at)); }
+  input { position: relative; z-index: 1; width: 100%; height: 16px; margin: 0; background: transparent; -webkit-appearance: none; appearance: none; cursor: pointer; }
+  input::-webkit-slider-runnable-track { height: 6px; background: transparent; }
+  input::-moz-range-track { height: 6px; background: transparent; }
+  input::-webkit-slider-thumb { -webkit-appearance: none; width: var(--thumb); height: 16px; margin-top: -5px; border: 0;
+    border-radius: 8px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.5); }
+  input::-moz-range-thumb { width: var(--thumb); height: 16px; border: 0; border-radius: 8px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.5); }
+  /* A ring on the rail, the same dot that leads the mark label on the map; filled once played. */
+  .mark { position: absolute; top: calc(50% - 4.5px); width: 9px; height: 9px; box-sizing: border-box; border-radius: 50%;
+    border: 2px solid var(--radarclip-me, #9d8cff); background: var(--radarclip-panel, #14171c); pointer-events: none;
+    transform: translateX(-4.5px); left: calc(var(--thumb) / 2 + var(--f) * (100% - var(--thumb))); }
+  .mark.seen { background: #fff; }
   @media (max-width: 480px) { .bar { gap: 5px; padding: 6px; } .time { min-width: 44px; } }
 `
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
@@ -48,7 +62,7 @@ export class RadarclipControlsElement extends HTMLElement {
       <div class="bar">
         <button class="play" type="button" aria-label="Play">${ICON.play}</button>
         <span class="time"></span>
-        <div class="track"><input type="range" step="0.01" aria-label="Time"></div>
+        <div class="track"><div class="rail"></div><input type="range" step="0.01" aria-label="Time"></div>
         <button class="speed" type="button" aria-label="Speed">1×</button>
         <button class="floor" type="button" aria-label="Floor" hidden></button>
         <button class="zoom" type="button" aria-label="Zoom">Map</button>
@@ -57,10 +71,20 @@ export class RadarclipControlsElement extends HTMLElement {
     this.el = { play: $('.play'), time: $('.time'), range: $('input'), track: $('.track'), speed: $('.speed'), floor: $('.floor'), zoom: $('.zoom') }
     const p = () => this._target?.player
     this.el.play.onclick = () => p()?.toggle()
-    this.el.range.oninput = (e) => {
-      p()?.pause()
-      p()?.seek(+(e.target as HTMLInputElement).value)
+    // Scrubbing pauses while the knob moves and resumes on release if it was playing.
+    this.el.range.onpointerdown = () => {
+      const pl = p()
+      if (!pl?.playing) return
+      pl.pause()
+      const resume = () => {
+        removeEventListener('pointerup', resume)
+        removeEventListener('pointercancel', resume)
+        if (pl.time < pl.end) pl.play()
+      }
+      addEventListener('pointerup', resume)
+      addEventListener('pointercancel', resume)
     }
+    this.el.range.oninput = (e) => p()?.seek(+(e.target as HTMLInputElement).value)
     this.el.speed.onclick = () => {
       const pl = p()
       if (pl) pl.speed = SPEEDS[(SPEEDS.indexOf(pl.speed) + 1) % SPEEDS.length]
@@ -129,7 +153,6 @@ export class RadarclipControlsElement extends HTMLElement {
     if (!p?.replay || e.defaultPrevented) return
     if (e.key === ' ' || e.key === 'k') p.toggle()
     else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-      p.pause()
       p.seek(p.time + (e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 5 : 1))
     } else return
     e.preventDefault()
@@ -147,7 +170,7 @@ export class RadarclipControlsElement extends HTMLElement {
     this.el.track.insertAdjacentHTML('beforeend', c.marks
       .map((m) => ({ s: m.t / c.tickrate, label: m.label }))
       .filter(({ s }) => s >= p.start && s <= p.end)
-      .map(({ s, label }) => `<span class="mark" style="left:${((s - p.start) / span) * 100}%" title="${esc(label)}"></span>`)
+      .map(({ s, label }) => `<span class="mark" style="--f:${(s - p.start) / span}" data-s="${s}" title="${esc(label)}"></span>`)
       .join(''))
     this.el.floor.hidden = !p.floors
   }
@@ -157,6 +180,8 @@ export class RadarclipControlsElement extends HTMLElement {
   private sync(p: PlayerState) {
     if (!p.clip) return
     ;(this.el.range as HTMLInputElement).value = String(p.time)
+    this.el.track.style.setProperty('--f', String((p.time - p.start) / (p.end - p.start || 1)))
+    for (const m of this.el.track.querySelectorAll<HTMLElement>('.mark')) m.classList.toggle('seen', +m.dataset.s! <= p.time)
     this.text(this.el.time, `${p.time.toFixed(1)} s`)
     if (this.el.play.dataset.state !== String(p.playing)) {
       this.el.play.dataset.state = String(p.playing)
