@@ -2,9 +2,10 @@ import type { PlayerState, RadarclipPlayerElement, StateKey } from '@radarclip/p
 
 const SPEEDS = [0.25, 0.5, 1, 2]
 const ICON = {
-  play: '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M7 4.5v15l13-7.5z" fill="currentColor"/></svg>',
-  pause: '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z" fill="currentColor"/></svg>',
   // radarclip's own icons (the design system's Icons card): 20 px grid, 1.5 px stroke, square caps.
+  // Play/pause is the bar's one borderless control, so it shows at the grid's full 20 px.
+  play: '<svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter"><path d="M6 4l10 6-10 6z"/></svg>',
+  pause: '<svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter"><path d="M7 4v12 M13 4v12"/></svg>',
   // Zoom buttons show where a click goes: the whole radar, or back around the players.
   map: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter"><path d="M3 5l4.5-2 5 2 4.5-2v12l-4.5 2-5-2-4.5 2z M7.5 3v12 M12.5 5v12"/></svg>',
   fit: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter"><path d="M3 7V3h4 M13 3h4v4 M17 13v4h-4 M7 17H3v-4"/><circle cx="10" cy="10" r="1.5"/></svg>',
