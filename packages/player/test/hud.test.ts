@@ -68,11 +68,23 @@ it('shows the round number under the clock', async () => {
   expect(texts).toContain('R7')
 })
 
-it('keeps a mark label on screen from its mark until the clip ends', async () => {
+it('shows a mark label for 3 s from its mark', async () => {
   const clip = await ancient()
-  expect(await at(clip, 3800 / 64)).not.toContain('kill')
+  expect(await at(clip, 3821 / 64 - 0.3)).not.toContain('kill')
+  // Fading in just before its mark, fully there at it.
+  expect(await at(clip, 3821 / 64 - 0.1)).toContain('kill')
   expect(await at(clip, 3821 / 64)).toContain('kill')
-  expect(await at(clip, 4100 / 64)).toContain('kill')
+  expect(await at(clip, 3821 / 64 + 2.9)).toContain('kill')
+  expect(await at(clip, 3821 / 64 + 3.1)).not.toContain('kill')
+})
+
+it('keeps a long mark label longer so it can be read', async () => {
+  const clip = await ancient()
+  const label = 'You peek mid alone while your team is still at spawn, so the'
+  clip.marks = [{ t: 3821, label }]
+  const shown = async (s: number) => (await at(clip, 3821 / 64 + s, 1200)).some((t) => t.length > 3 && label.startsWith(t))
+  expect(await shown(3.5)).toBe(true)
+  expect(await shown(4.1)).toBe(false)
 })
 
 it('wraps a long mark label within the canvas', async () => {
