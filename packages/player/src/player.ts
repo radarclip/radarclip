@@ -200,6 +200,10 @@ const easeOut = (k: number) => 1 - Math.pow(1 - k, 3)
 /** Utility keeps its in-game reading (design system util-* tokens). */
 const UTIL = { smoke: '#cfd3d8', fire: '#ff5a1f', flash: '#ffffff', he: '#9cff57' }
 const MARK_LINES = 3
+/** Seconds a mark label stays on screen at least. */
+const MARK_HOLD = 3
+/** Seconds a mark label fades in before its mark. */
+const MARK_FADE_IN = 0.2
 
 /**
  * Splits `text` into at most `max` lines no wider than `width`: at spaces, and inside a word only
@@ -1690,11 +1694,17 @@ export class RadarclipPlayer {
       y += H_ROW + 4 * k
     }
 
-    // Mark label: the latest labelled mark stays until the next one, so notes change as the clip
-    // plays. A focus diamond leads it; long labels wrap within the canvas (see wrap).
+    // Mark label: the latest labelled mark shows for a moment (3 s, longer for long notes so they
+    // can be read), then fades out; the next mark replaces it. It fades in just before its mark,
+    // so it is fully there when the knob reaches it. A dot (as on the timeline) leads it; long
+    // labels wrap within the canvas (see wrap).
     let mark: (typeof r.clip.marks)[number] | undefined
-    if (hud.marks) for (const m of r.clip.marks) if (m.label && m.t <= t && (!mark || m.t >= mark.t)) mark = m
-    if (mark?.label) {
+    const lead = MARK_FADE_IN * r.tickrate
+    if (hud.marks) for (const m of r.clip.marks) if (m.label && m.t <= t + lead && (!mark || m.t >= mark.t)) mark = m
+    const shown = mark ? (t - mark.t) / r.tickrate : 0
+    const hold = mark?.label ? Math.max(MARK_HOLD, mark.label.length / 15) : 0
+    if (mark?.label && shown < hold) {
+      g.globalAlpha = Math.min(1, (shown + MARK_FADE_IN) / MARK_FADE_IN, (hold - shown) / 0.5)
       font(12, 500)
       const LINE = 16 * k
       const lines = wrap(mark.label, W - 2 * pad - 30 * k, MARK_LINES, (s) => g.measureText(s).width)
@@ -1702,14 +1712,13 @@ export class RadarclipPlayer {
       const h = 6 * k + lines.length * LINE
       const top = H - pad - h
       pill(pad, top, w, h, 'rgba(20,23,28,.9)')
-      g.save()
-      g.translate(pad + 10 * k, top + 3 * k + LINE / 2)
-      g.rotate(Math.PI / 4)
       g.fillStyle = this.theme.me
-      g.fillRect(-3 * k, -3 * k, 6 * k, 6 * k)
-      g.restore()
+      g.beginPath()
+      g.arc(pad + 10 * k, top + 3 * k + LINE / 2, 3.5 * k, 0, Math.PI * 2)
+      g.fill()
       g.fillStyle = this.theme.fg
       lines.forEach((l, i) => g.fillText(l, pad + 19 * k, top + 3 * k + LINE * (i + 0.5)))
+      g.globalAlpha = 1
     }
     g.textBaseline = 'alphabetic'
   }
