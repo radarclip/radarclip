@@ -4,6 +4,12 @@ const SPEEDS = [0.25, 0.5, 1, 2]
 const ICON = {
   play: '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M7 4.5v15l13-7.5z" fill="currentColor"/></svg>',
   pause: '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z" fill="currentColor"/></svg>',
+  // Zoom buttons show where a click goes: the whole radar, or back around the players.
+  map: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 6.5 9 4l6 2.5L21 4v13.5L15 20l-6-2.5L3 20zM9 4v13.5M15 6.5V20"/></svg>',
+  fit: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></svg>',
+  // Floor buttons show the floor on screen: two stacked floors, that one filled.
+  upper: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3l9 4.5-9 4.5-9-4.5z" fill="currentColor"/><path d="M12 12l9 4.5-9 4.5-9-4.5z"/></svg>',
+  lower: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3l9 4.5-9 4.5-9-4.5z"/><path d="M12 12l9 4.5-9 4.5-9-4.5z" fill="currentColor"/></svg>',
 }
 const CSS = `
   :host { display: block; color: var(--radarclip-fg, #e8ebef); font: 13px/1.4 Geist, system-ui, -apple-system, "Segoe UI", sans-serif; }
@@ -16,7 +22,11 @@ const CSS = `
   button.play { border: 0; padding: 4px; }
   button svg { pointer-events: none; }
   button[hidden] { display: none; }
-  .time { font: 500 12px/1 "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; color: var(--radarclip-muted, #9aa3ae); min-width: 52px; text-align: right; }
+  /* Every label a button can show sits in one grid cell, so the button keeps the widest one's
+     width and the timeline doesn't jump when the label changes. */
+  .stack { display: inline-grid; justify-items: center; }
+  .stack > * { grid-area: 1 / 1; }
+  .stack > [aria-hidden] { visibility: hidden; }
   /* The knob is drawn here, not by the browser, so its width is known: its centre runs from
      thumb/2 to 100% − thumb/2, and the rail's fill and the marks use the same formula. The rail
      sits under the marks and the input on top of both, so only its knob shows. */
@@ -35,12 +45,14 @@ const CSS = `
     border: 2px solid var(--radarclip-me, #9d8cff); background: var(--radarclip-panel, #14171c); pointer-events: none;
     transform: translateX(-4.5px); left: calc(var(--thumb) / 2 + var(--f) * (100% - var(--thumb))); }
   .mark.seen { background: #fff; }
-  @media (max-width: 480px) { .bar { gap: 5px; padding: 6px; } .time { min-width: 44px; } }
+  @media (max-width: 480px) { .bar { gap: 5px; padding: 6px; } }
 `
+const stack = (labels: string[], current: string) =>
+  `<span class="stack"><span class="v">${current}</span>${labels.map((l) => `<span aria-hidden="true">${l}</span>`).join('')}</span>`
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
 
 /**
- * Play/pause, time, timeline with marks, speed, floor and zoom for a `<radarclip-player>`.
+ * Play/pause, timeline with marks, speed, floor and zoom for a `<radarclip-player>`.
  *
  *     <radarclip-player id="p" src="r7.radarclip"></radarclip-player>
  *     <radarclip-controls for="p"></radarclip-controls>
@@ -51,7 +63,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 export class RadarclipControlsElement extends HTMLElement {
   static observedAttributes = ['for']
   private root: ShadowRoot
-  private el!: Record<'play' | 'time' | 'range' | 'track' | 'speed' | 'floor' | 'zoom', HTMLElement>
+  private el!: Record<'play' | 'range' | 'track' | 'speed' | 'floor' | 'zoom', HTMLElement>
   private _target?: RadarclipPlayerElement
   private cleanup: (() => void)[] = []
 
@@ -61,14 +73,13 @@ export class RadarclipControlsElement extends HTMLElement {
     this.root.innerHTML = `<style>${CSS}</style>
       <div class="bar">
         <button class="play" type="button" aria-label="Play">${ICON.play}</button>
-        <span class="time"></span>
         <div class="track"><div class="rail"></div><input type="range" step="0.01" aria-label="Time"></div>
-        <button class="speed" type="button" aria-label="Speed">1×</button>
-        <button class="floor" type="button" aria-label="Floor" hidden></button>
-        <button class="zoom" type="button" aria-label="Zoom">Map</button>
+        <button class="speed" type="button" aria-label="Speed">${stack(SPEEDS.map((s) => `${s}×`), '1×')}</button>
+        <button class="floor" type="button" hidden></button>
+        <button class="zoom" type="button" data-to="map" aria-label="Show the whole map" title="Show the whole map">${ICON.map}</button>
       </div>`
     const $ = (s: string) => this.root.querySelector(s) as HTMLElement
-    this.el = { play: $('.play'), time: $('.time'), range: $('input'), track: $('.track'), speed: $('.speed'), floor: $('.floor'), zoom: $('.zoom') }
+    this.el = { play: $('.play'), range: $('input'), track: $('.track'), speed: $('.speed'), floor: $('.floor'), zoom: $('.zoom') }
     const p = () => this._target?.player
     this.el.play.onclick = () => p()?.toggle()
     // Scrubbing pauses while the knob moves and resumes on release if it was playing.
@@ -182,15 +193,29 @@ export class RadarclipControlsElement extends HTMLElement {
     ;(this.el.range as HTMLInputElement).value = String(p.time)
     this.el.track.style.setProperty('--f', String((p.time - p.start) / (p.end - p.start || 1)))
     for (const m of this.el.track.querySelectorAll<HTMLElement>('.mark')) m.classList.toggle('seen', +m.dataset.s! <= p.time)
-    this.text(this.el.time, `${p.time.toFixed(1)} s`)
+    // The time itself is the round clock on the map; the slider still tells screen readers.
+    this.el.range.setAttribute('aria-valuetext', `${p.time.toFixed(1)} s`)
     if (this.el.play.dataset.state !== String(p.playing)) {
       this.el.play.dataset.state = String(p.playing)
       this.el.play.innerHTML = p.playing ? ICON.pause : ICON.play
       this.el.play.setAttribute('aria-label', p.playing ? 'Pause' : 'Play')
     }
-    this.text(this.el.speed, `${p.speed}×`)
-    this.text(this.el.floor, p.floor === 'upper' ? 'Upper' : 'Lower')
-    this.text(this.el.zoom, p.zoom === 'fit' ? 'Map' : 'Fit')
+    this.text(this.el.speed.querySelector('.v')!, `${p.speed}×`)
+    if (this.el.floor.dataset.floor !== p.floor) {
+      this.el.floor.dataset.floor = p.floor
+      this.el.floor.innerHTML = ICON[p.floor]
+      const label = p.floor === 'upper' ? 'Upper floor: show the lower one' : 'Lower floor: show the upper one'
+      this.el.floor.setAttribute('aria-label', label)
+      this.el.floor.title = label
+    }
+    const to = p.zoom === 'fit' ? 'map' : 'fit'
+    if (this.el.zoom.dataset.to !== to) {
+      this.el.zoom.dataset.to = to
+      this.el.zoom.innerHTML = ICON[to]
+      const label = to === 'map' ? 'Show the whole map' : 'Zoom to the players'
+      this.el.zoom.setAttribute('aria-label', label)
+      this.el.zoom.title = label
+    }
   }
 
   private text(el: HTMLElement, value: string) {
