@@ -4,12 +4,13 @@ const SPEEDS = [0.25, 0.5, 1, 2]
 const ICON = {
   play: '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M7 4.5v15l13-7.5z" fill="currentColor"/></svg>',
   pause: '<svg viewBox="0 0 24 24" width="18" height="18"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z" fill="currentColor"/></svg>',
+  // radarclip's own icons (the design system's Icons card): 20 px grid, 1.5 px stroke, square caps.
   // Zoom buttons show where a click goes: the whole radar, or back around the players.
-  map: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 6.5 9 4l6 2.5L21 4v13.5L15 20l-6-2.5L3 20zM9 4v13.5M15 6.5V20"/></svg>',
-  fit: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></svg>',
+  map: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter"><path d="M3 5l4.5-2 5 2 4.5-2v12l-4.5 2-5-2-4.5 2z M7.5 3v12 M12.5 5v12"/></svg>',
+  fit: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter"><path d="M3 7V3h4 M13 3h4v4 M17 13v4h-4 M7 17H3v-4"/><circle cx="10" cy="10" r="1.5"/></svg>',
   // Floor buttons show the floor on screen: two stacked floors, that one filled.
-  upper: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3l9 4.5-9 4.5-9-4.5z" fill="currentColor"/><path d="M12 12l9 4.5-9 4.5-9-4.5z"/></svg>',
-  lower: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3l9 4.5-9 4.5-9-4.5z"/><path d="M12 12l9 4.5-9 4.5-9-4.5z" fill="currentColor"/></svg>',
+  upper: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter"><path d="M10 3l7 3.5-7 3.5-7-3.5z" fill="currentColor"/><path d="M3 13.5l7 3.5 7-3.5"/></svg>',
+  lower: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter"><path d="M10 3l7 3.5-7 3.5-7-3.5z"/><path d="M10 10l7 3.5-7 3.5-7-3.5z" fill="currentColor"/></svg>',
 }
 const CSS = `
   :host { display: block; color: var(--radarclip-fg, #e8ebef); font: 13px/1.4 Geist, system-ui, -apple-system, "Segoe UI", sans-serif; }
