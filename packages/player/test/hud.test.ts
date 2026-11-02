@@ -33,13 +33,13 @@ describe('wrap', () => {
 })
 
 function recordingCanvas(width = 400) {
-  const texts: { text: string; x: number }[] = []
+  const texts: { text: string; x: number; alpha: number }[] = []
   const ctx = new Proxy({} as Record<string | symbol, unknown>, {
     get: (t, k) => {
       if (k in t) return t[k]
       if (k === 'measureText') return (s: string) => ({ width: measure(s) })
       if (k === 'createRadialGradient' || k === 'createLinearGradient') return () => ({ addColorStop() {} })
-      if (k === 'fillText') return (text: string, x: number) => texts.push({ text, x })
+      if (k === 'fillText') return (text: string, x: number) => texts.push({ text, x, alpha: t.globalAlpha as number })
       return () => {}
     },
     set: (t, k, v) => ((t[k] = v), true),
@@ -76,6 +76,18 @@ it('shows a mark label for 3 s from its mark', async () => {
   expect(await at(clip, 3821 / 64)).toContain('kill')
   expect(await at(clip, 3821 / 64 + 2.9)).toContain('kill')
   expect(await at(clip, 3821 / 64 + 3.1)).not.toContain('kill')
+})
+
+it('never draws a mark label with an opacity a canvas would ignore', async () => {
+  // A canvas keeps its last opacity when given one below 0, so a label just inside its fade-in
+  // showed in full for that frame.
+  const rec = recordingCanvas()
+  const p = new RadarclipPlayer(rec.canvas, { interactive: false, icon: false })
+  await p.load(await ancient())
+  for (let i = 0; i <= 400; i++) p.seek(3821 / 64 - 0.21 + i * 0.0001)
+  const alphas = rec.texts.filter((t) => t.text === 'kill').map((t) => t.alpha)
+  expect(alphas.length).toBeGreaterThan(0)
+  for (const a of alphas) expect(a).toBeGreaterThanOrEqual(0)
 })
 
 it('keeps a long mark label longer so it can be read', async () => {
