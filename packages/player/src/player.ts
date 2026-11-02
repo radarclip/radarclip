@@ -1704,7 +1704,9 @@ export class RadarclipPlayer {
     const shown = mark ? (t - mark.t) / r.tickrate : 0
     const hold = mark?.label ? Math.max(MARK_HOLD, mark.label.length / 15) : 0
     if (mark?.label && shown < hold) {
-      g.globalAlpha = Math.min(1, (shown + MARK_FADE_IN) / MARK_FADE_IN, (hold - shown) / 0.5)
+      // Never below 0: a canvas ignores that and keeps the last opacity (full), and rounding puts
+      // the first frame of the fade-in a hair under 0.
+      g.globalAlpha = Math.max(0, Math.min(1, (shown + MARK_FADE_IN) / MARK_FADE_IN, (hold - shown) / 0.5))
       font(12, 500)
       const LINE = 16 * k
       const lines = wrap(mark.label, W - 2 * pad - 30 * k, MARK_LINES, (s) => g.measureText(s).width)
