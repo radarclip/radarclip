@@ -154,6 +154,7 @@ const ATTEMPT_STOPPED = 1.5 // seconds a plant or defuse given up stays visible
 const BOMB = { planted: '#ff2b2b', defuse: '#4cd28a', explode: '#ff9a1f' }
 const SMOKE_R = 144 // world units
 const FIRE_R = 120
+const HE_R = 200 // world units: where an HE still does ~20 HP (it reaches ~350, but only chips past ~240)
 const TRACER = 520 // world units drawn for a shot that hit nobody (~13 m)
 const TRACER_LIFE = 0.3 // seconds a shot stays visible
 const KNIFE_REACH = 64 // world units from the swinger's centre to the slash streak (hits measured up to ~94)
@@ -967,7 +968,7 @@ export class RadarclipPlayer {
     g.globalAlpha = 1
 
     // Flash: a starburst at the pop, then a line in the thrower's colour to every enemy it
-    // blinded, for as long as they are blind. HE: an expanding ring (it leaves no area).
+    // blinded, for as long as they are blind. HE: a ring expanding to its damage radius (it leaves no area).
     for (const e of r.events) {
       if (e.type !== 'flash' && e.type !== 'he') continue
       if (t < e.t || !this.onFloor(e.z)) continue
@@ -1003,7 +1004,7 @@ export class RadarclipPlayer {
           g.globalAlpha = 1
         }
       } else if (p <= 1) {
-        circle(x, y, (6 + 26 * (1 - Math.pow(1 - p, 3))) * u)
+        circle(x, y, Math.max(6 * u, (HE_R / this.radar.scale) * (1 - Math.pow(1 - p, 3))))
         g.globalAlpha = 1 - p
         g.lineWidth = 2 * u
         g.strokeStyle = UTIL.he
