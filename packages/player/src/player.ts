@@ -696,14 +696,47 @@ export class RadarclipPlayer {
     return { players: near.map((d) => d.index), x, y }
   }
 
+  /**
+   * The players drawn together with the one under the pointer: every dot that touches it, and the
+   * dots touching those, so a pile at spawn is one group wherever the pointer is on it. The point
+   * is the group's middle, so its list doesn't move while the pointer does.
+   */
+  private clusterAt(cssX: number, cssY: number): { players: number[]; x: number; y: number } {
+    const at = this.hitsAt(cssX, cssY)
+    if (!at.players.length) return at
+    const gap = (4 * this.screen.dpr) / this.screen.s
+    const group = this.drawn.filter((d) => at.players.includes(d.index))
+    for (let i = 0; i < group.length; i++) {
+      for (const d of this.drawn) {
+        if (!group.includes(d) && Math.hypot(d.x - group[i].x, d.y - group[i].y) <= d.r + group[i].r + gap) group.push(d)
+      }
+    }
+    if (group.length < 2) return at
+    const x = group.reduce((a, d) => a + d.x, 0) / group.length, y = group.reduce((a, d) => a + d.y, 0) / group.length
+    return { players: group.map((d) => d.index).sort((a, b) => a - b), x, y }
+  }
+
   private target(cssX: number, cssY: number) {
     return this.targets.find(({ box: [a, b, c, d] }) => cssX >= a && cssX <= c && cssY >= b && cssY <= d)
   }
 
+  /** Whether a point (CSS px) is on the way between the open list's players and the list. */
+  private nearStack(cssX: number, cssY: number) {
+    const stack = this.stack, box = this.stackBox
+    if (!stack || !box) return false
+    const { s, ox, oy, dpr } = this.screen
+    const dots = this.drawn.filter((d) => stack.players.includes(d.index))
+    const xs = dots.flatMap((d) => [((d.x - d.r - this.view[0]) * s + ox) / dpr, ((d.x + d.r - this.view[0]) * s + ox) / dpr])
+    const ys = dots.flatMap((d) => [((d.y - d.r - this.view[1]) * s + oy) / dpr, ((d.y + d.r - this.view[1]) * s + oy) / dpr])
+    const m = 10
+    return cssX >= Math.min(box[0], ...xs) - m && cssX <= Math.max(box[2], ...xs) + m && cssY >= Math.min(box[1], ...ys) - m && cssY <= Math.max(box[3], ...ys) + m
+  }
+
   /**
    * Highlight the player under the pointer (their name in full, on a pill), or none. With
-   * `select`, players stacked on one spot open a list instead; it keeps its rows while the
-   * pointer is in it.
+   * `select`, players drawn on top of each other open a list instead. It stays put while the
+   * pointer is on the group, in the list or on the way between them, and a list opened by a click
+   * stays until the next click elsewhere.
    */
   private hover(cssX: number | null, cssY = 0) {
     let hit: number | null = null
@@ -712,13 +745,16 @@ export class RadarclipPlayer {
     const inList = cssX != null && this.stackBox != null && cssX >= this.stackBox[0] && cssX <= this.stackBox[2] && cssY >= this.stackBox[1] && cssY <= this.stackBox[3]
     if (inList) row = this.target(cssX!, cssY)?.index ?? null
     else if (cssX != null && this.replay) {
-      const at = this.hitsAt(cssX, cssY)
+      const at = this._selectable ? this.clusterAt(cssX, cssY) : this.hitsAt(cssX, cssY)
+      const same = stack != null && stack.players.length === at.players.length && at.players.every((p) => stack!.players.includes(p))
       if (this._selectable && at.players.length > 1) {
-        const same = stack != null && stack.players.length === at.players.length && at.players.every((p) => stack!.players.includes(p))
-        if (!same) stack = { x: at.x, y: at.y, players: [...at.players].sort((a, b) => a - b), pinned: false }
+        if (!same && !stack?.pinned) stack = { x: at.x, y: at.y, players: at.players, pinned: false }
+      } else if (stack && (stack.pinned || this.nearStack(cssX, cssY))) {
+        // Keep the list: pinned (other players still get their pill), or the pointer is on its way to it.
+        hit = stack.pinned ? at.players[0] ?? null : null
       } else {
         hit = at.players[0] ?? null
-        if (stack && !stack.pinned) stack = null
+        stack = null
       }
     } else if (stack && !stack.pinned) stack = null
     const target = cssX != null ? this.target(cssX, cssY) : undefined
@@ -735,9 +771,11 @@ export class RadarclipPlayer {
     if (!this._selectable || !this.replay) return
     const target = this.target(cssX, cssY)
     if (target) return this.select(target.index)
-    const at = this.hitsAt(cssX, cssY)
+    const at = this.clusterAt(cssX, cssY)
     if (at.players.length > 1) {
-      this.stack = { x: at.x, y: at.y, players: [...at.players].sort((a, b) => a - b), pinned: true }
+      const open = this.stack
+      const same = open != null && open.players.length === at.players.length && at.players.every((p) => open.players.includes(p))
+      this.stack = same ? { ...open, pinned: true } : { x: at.x, y: at.y, players: at.players, pinned: true }
       this.hovered = null
       this.render()
       return
@@ -2008,10 +2046,11 @@ export class RadarclipPlayer {
     if (f.live) this.stackBox = null
     const stack = this.stack
     if (!f.live || !stack || !this._selectable) return
-    // Once the players have split up (fewer than two still near the spot), a list nobody holds closes.
-    const reach = (14 * this.screen.dpr) / this.screen.s
-    const near = this.drawn.filter((d) => stack.players.includes(d.index) && Math.hypot(d.x - stack.x, d.y - stack.y) <= d.r + reach)
-    if (near.length < 2 && !stack.pinned && this.stackRow == null) {
+    // Once the players have split up (no two of them touch any more), a list nobody holds closes.
+    const gap = (4 * this.screen.dpr) / this.screen.s
+    const dots = this.drawn.filter((d) => stack.players.includes(d.index))
+    const together = dots.some((a) => dots.some((b) => a !== b && Math.hypot(a.x - b.x, a.y - b.y) <= a.r + b.r + gap))
+    if (!together && !stack.pinned && this.stackRow == null) {
       this.stack = null
       return
     }
