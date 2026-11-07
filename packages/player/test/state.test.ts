@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { readClip } from '@radarclip/format'
+import { decode, readClip, stateAt } from '@radarclip/format'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { RadarclipPlayer, type StateKey } from '../src/player.js'
 
@@ -132,4 +132,33 @@ it('takes view settings before a clip is loaded and applies them on load', async
   expect(view()).toEqual([0, 0, 1024])
   p.zoom = 'fit'
   expect(view()[2]).toBeLessThan(1024)
+})
+
+it('follows the focus player between floors, and keeps a floor picked by hand', async () => {
+  // The fixture stays above Nuke's real split, so this radar splits where player 1 crosses.
+  const split = -300
+  const clip = { ...(await readClip(readFileSync(fixture, 'utf8'))), focus: [1] }
+  const p = new RadarclipPlayer(fakeCanvas(), { interactive: false, radar: { pos_x: -3453, pos_y: 2887, scale: 7, split_z: split } })
+  await p.load(clip)
+  const r = decode(clip)
+  const seen = new Set<string>()
+  for (let t = r.start; t <= r.end; t += r.step * 8) {
+    p.seek(t / r.tickrate)
+    const z = stateAt(r, 1, t)?.z
+    if (z === undefined) continue
+    // Well past the split on either side, the floor is the player's; near it, either.
+    if (z < split - 60) expect(p.floor).toBe('lower')
+    if (z > split + 60) expect(p.floor).toBe('upper')
+    seen.add(p.floor)
+  }
+  expect([...seen].sort()).toEqual(['lower', 'upper'])
+  // Picked by hand, the floor stays put while the clip plays on, until the next clip.
+  p.seek(r.start / r.tickrate)
+  p.floor = 'lower'
+  for (let t = r.start; t <= r.end; t += r.step * 8) p.seek(t / r.tickrate)
+  expect(p.floor).toBe('lower')
+  await p.load(clip)
+  const again = new Set<string>()
+  for (let t = r.start; t <= r.end; t += r.step * 8) { p.seek(t / r.tickrate); again.add(p.floor) }
+  expect([...again].sort()).toEqual(['lower', 'upper'])
 })
