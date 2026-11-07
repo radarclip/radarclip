@@ -1579,8 +1579,10 @@ export class RadarclipPlayer {
     // Labels sit below the dot (the space above belongs to damage numbers) and never move, so
     // they don't jump around in close fights. One whose spot is covered by a player or a
     // higher-priority label fades out, and comes back once the spot has stayed free for
-    // LABEL_HOLD, so it doesn't blink. The focus player's and the hovered label always show.
+    // LABEL_HOLD, so it doesn't blink. The focus player's, the selected and the hovered label
+    // show over players, but give way to a higher-priority label (the hovered pill wins).
     const placed: [number, number, number, number][] = drawn.map((d) => [d.x - d.r, d.y - d.r, d.x + d.r, d.y + d.r])
+    const placedLabels: [number, number, number, number][] = []
     const lh = 11 * u
     const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
     // A snapshot starts without fades: every label shows as it settles.
@@ -1591,7 +1593,7 @@ export class RadarclipPlayer {
     labels.sort((a, b) => b.prio - a.prio || (fades.get(b.key)?.a ?? 0) - (fades.get(a.key)?.a ?? 0) || (a.key < b.key ? -1 : 1))
     for (const l of labels) {
       seen.add(l.key)
-      g.font = `${l.bold ? 600 : 500} ${(l.pill ? 10 : 9) * u}px ${SANS}`
+      g.font = `${l.bold ? 600 : 500} ${9 * u}px ${SANS}`
       const w = g.measureText(l.str).width
       const off = l.gap + 2.5 * u
       // A pill reaches a little past its text on every side.
@@ -1602,10 +1604,12 @@ export class RadarclipPlayer {
       // Only at the bottom edge of the view do the always-shown labels go above instead.
       if (l.prio >= 2 && !visible(boxOf(...spot))) spot = [l.x - w / 2, l.y - off - lh * 0.25]
       const box = boxOf(...spot)
-      const free = visible(box) && placed.every(([a, c, e, f]) => box[2] <= a || box[0] >= e || box[3] <= c || box[1] >= f)
+      const clear = ([a, c, e, f]: [number, number, number, number]) => box[2] <= a || box[0] >= e || box[3] <= c || box[1] >= f
+      const free = visible(box) && placed.every(clear)
+      const forced = l.prio >= 2 && placedLabels.every(clear)
       let f = fades.get(l.key)
-      if (!f) fades.set(l.key, (f = { on: free, a: free ? 1 : 0, freeSince: free ? now : null, at: now }))
-      if (l.prio >= 2) Object.assign(f, { on: true, a: 1, freeSince: now })
+      if (!f) fades.set(l.key, (f = { on: free || forced, a: free || forced ? 1 : 0, freeSince: free ? now : null, at: now }))
+      if (forced) Object.assign(f, { on: true, a: 1, freeSince: now })
       else if (!free) Object.assign(f, { on: false, freeSince: null })
       else {
         f.freeSince ??= now
@@ -1615,7 +1619,7 @@ export class RadarclipPlayer {
       f.a = f.on ? Math.min(1, f.a + step) : Math.max(0, f.a - step)
       f.at = now
       if (f.a !== (f.on ? 1 : 0) || (free && !f.on)) fading = true
-      if (f.on) placed.push(box)
+      if (f.on) { placed.push(box); placedLabels.push(box) }
       if (f.a <= 0) continue
       g.globalAlpha = l.alpha * f.a
       if (l.pill) {
