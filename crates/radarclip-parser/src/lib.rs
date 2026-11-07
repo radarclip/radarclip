@@ -351,6 +351,31 @@ fn fint(e: &GameEvent, name: &str) -> i64 {
     fnum(e, name).map(|v| v.round() as i64).unwrap_or(0)
 }
 
+/// When a smoke or fire (`smokegrenade_detonate` / `inferno_startburn`) stops: its expiry event,
+/// the same entity's within its life plus slack and before the next round starts (`next`, a
+/// tick). A round reset removes it without one, and a later grenade reuses the entity id, so
+/// looking further pairs it with someone else's. Without one: its usual life, cut at the round's
+/// end. Returns the expiry event's name with the tick.
+fn burn_end(events: &[GameEvent], start: &GameEvent, tickrate: u32, round_end: i32, next: i32) -> (&'static str, i32) {
+    // Measured on matchmaking demos: smokes expire ~22 s after they pop, fires 6–7 s after.
+    let (end_name, life, slack) = if start.name == "smokegrenade_detonate" { ("smokegrenade_expired", 22, 3) } else { ("inferno_expire", 7, 2) };
+    let tr = tickrate as i32;
+    let (ent, last) = (fnum(start, "entityid"), (start.tick + (life + slack) * tr).min(next));
+    let found = events.iter().find(|x| x.name == end_name && x.tick >= start.tick && x.tick <= last && fnum(x, "entityid") == ent);
+    (end_name, found.map_or_else(|| (start.tick + life * tr).min(round_end).max(start.tick), |x| x.tick))
+}
+
+/// The tick each player first died at between ticks `from` and `to`, by player key.
+fn first_deaths(events: &[GameEvent], from: i32, to: i32) -> AHashMap<String, i32> {
+    let mut died = AHashMap::default();
+    for e in events.iter().filter(|e| e.name == "player_death" && e.tick >= from && e.tick <= to) {
+        if let Some(key) = player_key(fstr(e, "user_steamid"), fstr(e, "user_name")) {
+            died.entry(key).or_insert(e.tick);
+        }
+    }
+    died
+}
+
 fn nade_kind(class: &str) -> Option<&'static str> {
     Some(match class {
         "CSmokeGrenadeProjectile" => "smoke",
@@ -847,6 +872,8 @@ impl Match {
         let user_pos = |e: &GameEvent| pos(e, "user_X", "user_Y", "user_Z");
         let nade_pos = |e: &GameEvent| pos(e, "x", "y", "z");
 
+        let died = first_deaths(&self.events, r0, t1);
+        let next_round = self.rounds.get(req.round as usize).map_or(i32::MAX, |r| r.freeze_end);
         let mut events = vec![];
         let mut shots: Vec<(i64, u32, i64)> = vec![];
         let (mut knife, mut zeus): (Vec<(i64, u32, i64)>, Vec<(i64, u32, i64)>) = (vec![], vec![]);
@@ -879,7 +906,9 @@ impl Match {
                 "player_blind" if inside(e) => {
                     let duration = fnum(e, "blind_duration").unwrap_or(0.0);
                     let Some(victim) = who(e, "user") else { continue };
-                    if duration >= 0.3 {
+                    // CS2 blinds spectators too: a player already dead isn't.
+                    let dead = player_key(fstr(e, "user_steamid"), fstr(e, "user_name")).and_then(|k| died.get(&k).copied()).is_some_and(|d| d < e.tick);
+                    if duration >= 0.3 && !dead {
                         events.push(Event::Blind { t, victim, by: who(e, "attacker"), until: t + (duration * tr as f64).round() as i64 });
                     }
                 }
@@ -890,14 +919,7 @@ impl Match {
                 }
                 // Smokes and fires still burning when the clip starts count too.
                 "smokegrenade_detonate" | "inferno_startburn" if e.tick >= r0 && e.tick <= t1 => {
-                    let (end_name, life) = if e.name == "smokegrenade_detonate" { ("smokegrenade_expired", 20.0) } else { ("inferno_expire", 7.0) };
-                    let ent = fnum(e, "entityid");
-                    let until = self
-                        .events
-                        .iter()
-                        .find(|x| x.name == end_name && x.tick >= e.tick && fnum(x, "entityid") == ent)
-                        .map(|x| x.tick)
-                        .unwrap_or(e.tick + (life * tr) as i32);
+                    let (end_name, until) = burn_end(&self.events, e, self.tickrate, round.end, next_round);
                     if until < t0 {
                         continue;
                     }
@@ -1116,5 +1138,56 @@ mod derive_tests {
         let mut events = vec![event("flashbang_detonate", 10, "1"), event("player_blind", 10, "1"), event("bomb_beginplant", 22, "1")];
         derive_missing(&mut events, &players, &samples);
         assert_eq!(events.len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod burn_tests {
+    use super::*;
+
+    fn nade(name: &str, tick: i32, entity: i32) -> GameEvent {
+        GameEvent { name: name.into(), fields: vec![EventField { name: "entityid".into(), data: Some(Variant::I32(entity)) }], tick }
+    }
+
+    /// A smoke removed by the round reset has no expiry; a later smoke reusing its entity id
+    /// expires much later and must not end it. Without its own expiry it lasts its usual life,
+    /// cut at the round's end.
+    #[test]
+    fn smokes_and_fires_end_with_their_own_expiry() {
+        let (tr, s) = (64, 64);
+        let events = vec![
+            nade("smokegrenade_detonate", 100 * s, 7),
+            nade("smokegrenade_expired", 122 * s, 7),
+            // Popped 10 s before the round's end at 210 s, reset with the round; the next
+            // round starts at 230 s, where a smoke reuses entity 9 and expires at 262 s.
+            nade("smokegrenade_detonate", 200 * s, 9),
+            nade("smokegrenade_detonate", 240 * s, 9),
+            nade("smokegrenade_expired", 262 * s, 9),
+            nade("inferno_startburn", 300 * s, 4),
+            nade("inferno_expire", 307 * s, 4),
+            nade("inferno_startburn", 400 * s, 5),
+            nade("inferno_expire", 2000 * s, 5),
+        ];
+        assert_eq!(burn_end(&events, &events[0], tr, 210 * s, i32::MAX), ("smokegrenade_expired", 122 * s));
+        assert_eq!(burn_end(&events, &events[2], tr, 210 * s, 230 * s), ("smokegrenade_expired", 210 * s));
+        // Even without the next round's start, the reused id is outside the smoke's life.
+        assert_eq!(burn_end(&events, &events[2], tr, 210 * s, i32::MAX).1, 210 * s);
+        assert_eq!(burn_end(&events, &events[3], tr, 280 * s, i32::MAX).1, 262 * s);
+        assert_eq!(burn_end(&events, &events[5], tr, 330 * s, i32::MAX), ("inferno_expire", 307 * s));
+        assert_eq!(burn_end(&events, &events[7], tr, 500 * s, i32::MAX).1, 407 * s);
+    }
+
+    /// Blinds land on spectators too; the first death of each player in the window marks them dead.
+    #[test]
+    fn first_deaths_by_player() {
+        let death = |tick: i32, user: &str| {
+            let text = |n: &str, v: &str| EventField { name: n.into(), data: Some(Variant::String(v.into())) };
+            GameEvent { name: "player_death".into(), fields: vec![text("user_steamid", user), text("user_name", user)], tick }
+        };
+        let events = vec![death(5, "1"), death(20, "2"), death(30, "1"), death(90, "3")];
+        let died = first_deaths(&events, 10, 80);
+        assert_eq!(died.get("1"), Some(&30));
+        assert_eq!(died.get("2"), Some(&20));
+        assert_eq!(died.get("3"), None);
     }
 }
