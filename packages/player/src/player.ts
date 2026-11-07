@@ -33,7 +33,7 @@ export interface PlayerOptions {
   /** Zoom with the mouse wheel (default true). Turn off on pages that scroll past many players. */
   wheelZoom?: boolean
   /**
-   * Click or tap a player to select them (default false): a white ring around the dot and their
+   * Click or tap a player to select them (default false): a white border around the dot and their
    * HP, armor and gear in the map's bottom-right corner. Players stacked on one spot open a list
    * to pick from. See `select` and `selected`; can be switched later with `selectable`.
    */
@@ -1567,28 +1567,21 @@ export class RadarclipPlayer {
         circle(x, y, R)
         g.fillStyle = col
         g.fill()
-        g.lineWidth = mine ? edge * 1.5 : edge
-        g.strokeStyle = mine ? '#fff' : th.bg
+        // The selected player (the focus player too, when selected) gets a white edge; everyone
+        // else a dark one. The focus player is told apart by the halo alone.
+        const picked = f.live && p.index === this._selected
+        g.lineWidth = picked ? edge * 1.5 : edge
+        g.strokeStyle = picked ? '#fff' : th.bg
         g.stroke()
-        // The selected player: a white ring on a dark edge, outside the HP and blind rings.
-        if (f.live && p.index === this._selected) {
-          circle(x, y, R + 7 * u)
-          g.lineWidth = 3.6 * u
-          g.strokeStyle = th.bg
-          g.stroke()
-          g.lineWidth = 1.8 * u
-          g.strokeStyle = '#fff'
-          g.stroke()
-        }
       })
       let dz = ''
       if (!mine && me && Math.abs(st.z - me.z) >= 100) dz = ` ${st.z > me.z ? '▲' : '▼'}${Math.abs(Math.round((st.z - me.z) * 0.0254))} m`
       const hovered = f.live && p.index === this.hovered
       const picked = f.live && p.index === this._selected
       // Names only (HP is the ring), styled alike (the halo marks the focus player); theirs in full,
-      // the hovered one's in full on a pill, the selected one's in full and bold below its ring.
+      // the hovered one's in full on a pill, the selected one's in full and bold.
       const str = `${mine || hovered || picked ? p.name : short(p.name)}${dz}`
-      const gap = picked ? R + 8 * u : R + (st.hp < 100 ? 3 * u : 0)
+      const gap = R + (st.hp < 100 ? 3 * u : 0)
       text(`p${p.index}`, x, y, gap, str, th.fg, { bold: hovered || picked, pill: hovered, alpha: hovered || picked ? 1 : 0.92, prio: hovered ? 3 : picked ? 2.5 : mine ? 2 : focus.includes(p.index) ? 1 : fighting.has(p.index) ? 0.5 : 0 })
       drawn.push({ index: p.index, x, y, r: R })
     }
