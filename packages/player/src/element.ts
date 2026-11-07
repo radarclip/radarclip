@@ -1,7 +1,7 @@
-import { readClip, type Clip } from '@radarclip/format'
+import { readClip, type Clip, type Detail } from '@radarclip/format'
 import { RadarclipPlayer, type PlayerEventName, type Theme } from './player.js'
 
-const EVENTS: PlayerEventName[] = ['load', 'time', 'play', 'pause', 'ended', 'view']
+const EVENTS: PlayerEventName[] = ['load', 'time', 'play', 'pause', 'ended', 'view', 'select']
 
 /**
  * The bare viewer: a canvas that draws and plays a clip, no controls.
@@ -11,12 +11,14 @@ const EVENTS: PlayerEventName[] = ['load', 'time', 'play', 'pause', 'ended', 'vi
  *
  * `el.player` is the RadarclipPlayer; its events are re-dispatched on the element as
  * `radarclip:load`, `radarclip:time`, `radarclip:play`, `radarclip:pause`, `radarclip:ended`,
- * `radarclip:view` (detail: seconds), and every change once more as `radarclip:change`
- * (detail: `{ state, changed }`, see `RadarclipPlayer.onChange`), so controls and apps can connect.
+ * `radarclip:view`, `radarclip:select` (detail: seconds), and every change once more as
+ * `radarclip:change` (detail: `{ state, changed }`, see `RadarclipPlayer.onChange`), so controls
+ * and apps can connect. The `select` attribute lets a click or tap select a player (see
+ * `PlayerOptions.select`); Esc on the focused element clears the selection.
  * Colours: --radarclip-ct, -t, -me, -bg, -fg, -muted.
  */
 export class RadarclipPlayerElement extends HTMLElement {
-  static observedAttributes = ['src']
+  static observedAttributes = ['src', 'select']
   readonly player: RadarclipPlayer
   private loading = 0
 
@@ -33,6 +35,11 @@ export class RadarclipPlayerElement extends HTMLElement {
     }
     this.player.onChange((state, changed) =>
       this.dispatchEvent(new CustomEvent('radarclip:change', { detail: { state, changed: [...changed] } })))
+    this.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || this.player.selected == null) return
+      e.stopPropagation()
+      this.player.select(null)
+    })
   }
 
   connectedCallback() {
@@ -48,17 +55,21 @@ export class RadarclipPlayerElement extends HTMLElement {
     if (name === 'src' && value) {
       void this.load(fetch(value).then((r) => (r.ok ? r.blob() : Promise.reject(new Error(`${r.status} ${value}`)))))
     }
+    if (name === 'select') this.player.selectable = value != null
   }
 
-  /** Load a clip object, `.radarclip`/`.radarclip.json` bytes, a Blob or a JSON string. */
-  async load(source: Clip | Promise<Blob | string> | Blob | string | Uint8Array): Promise<void> {
+  /**
+   * Load a clip object, `.radarclip`/`.radarclip.json` bytes, a Blob or a JSON string; `detail`
+   * as `RadarclipPlayer.load` takes it.
+   */
+  async load(source: Clip | Promise<Blob | string> | Blob | string | Uint8Array, detail?: Detail): Promise<void> {
     const id = ++this.loading
     try {
       const data = await source
       const clip = typeof data === 'object' && 'format' in data ? (data as Clip) : await readClip(data as Blob | string | Uint8Array)
       if (id !== this.loading) return
       this.player.setTheme(this.cssTheme())
-      await this.player.load(clip)
+      await this.player.load(clip, detail)
     } catch (e) {
       this.dispatchEvent(new CustomEvent('radarclip:error', { detail: e }))
       throw e

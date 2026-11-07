@@ -1,4 +1,4 @@
-import { decode, stateAt, type Clip, type Event, type Radar, type Replay } from '@radarclip/format'
+import { decode, stateAt, type Clip, type Detail, type Event, type Radar, type Replay } from '@radarclip/format'
 
 export interface Theme {
   ct: string
@@ -33,6 +33,12 @@ export interface PlayerOptions {
   /** Zoom with the mouse wheel (default true). Turn off on pages that scroll past many players. */
   wheelZoom?: boolean
   /**
+   * Click or tap a player to select them (default false): a white ring around the dot and their
+   * HP, armor and gear in the map's bottom-right corner. Players stacked on one spot open a list
+   * to pick from. See `select` and `selected`; can be switched later with `selectable`.
+   */
+  select?: boolean
+  /**
    * URL of a kill-feed icon, or `false` for weapon names and radarclip's own drawn symbols.
    * `name` is a weapon as the game names it (`ak47`, `flashbang_assist`) or a kill symbol
    * (`headshot`, `wallbang`, `noscope`, `smoke`, `blind`). Default: the game's own icons via
@@ -48,14 +54,16 @@ export interface HudParts {
   clock?: boolean
   killFeed?: boolean
   marks?: boolean
+  /** The selected player's HP, armor and gear (only with `select`). */
+  player?: boolean
 }
 
 const hudParts = (hud: boolean | HudParts | undefined): Required<HudParts> =>
   hud === false
-    ? { clock: false, killFeed: false, marks: false }
+    ? { clock: false, killFeed: false, marks: false, player: false }
     : typeof hud === 'object'
-      ? { clock: hud.clock !== false, killFeed: hud.killFeed !== false, marks: hud.marks !== false }
-      : { clock: true, killFeed: true, marks: true }
+      ? { clock: hud.clock !== false, killFeed: hud.killFeed !== false, marks: hud.marks !== false, player: hud.player !== false }
+      : { clock: true, killFeed: true, marks: true, player: true }
 
 /** One frame drawn off-screen by `snapshot`. */
 export interface SnapshotOptions {
@@ -119,7 +127,7 @@ const SYMBOL: Record<'headshot' | 'wallbang' | 'noscope' | 'smoke' | 'blind', { 
   blind: { d: 'M2 10s3-5 8-5 8 5 8 5-3 5-8 5-8-5-8-5zM12.2 10a2.2 2.2 0 1 1-4.4 0 2.2 2.2 0 0 1 4.4 0z', heavy: 'M3.5 16.5l13-13' },
 }
 
-export type PlayerEventName = 'time' | 'play' | 'pause' | 'ended' | 'load' | 'view'
+export type PlayerEventName = 'time' | 'play' | 'pause' | 'ended' | 'load' | 'view' | 'select'
 
 /** Everything a UI around the player needs, as one snapshot. Times in seconds after freeze end. */
 export interface PlayerState {
@@ -133,13 +141,15 @@ export interface PlayerState {
   floor: Floor
   /** The map has a lower floor to switch to. */
   floors: boolean
+  /** The selected player, as an index into `clip.players`, or null. */
+  selected: number | null
 }
-export type StateKey = 'clip' | 'time' | 'playing' | 'speed' | 'zoom' | 'floor'
+export type StateKey = 'clip' | 'time' | 'playing' | 'speed' | 'zoom' | 'floor' | 'selected'
 export type ChangeListener = (state: PlayerState, changed: ReadonlySet<StateKey>) => void
 
-const ALL_KEYS: StateKey[] = ['clip', 'time', 'playing', 'speed', 'zoom', 'floor']
+const ALL_KEYS: StateKey[] = ['clip', 'time', 'playing', 'speed', 'zoom', 'floor', 'selected']
 const KEYS_OF: Record<PlayerEventName, StateKey[]> = {
-  load: ALL_KEYS, time: ['time'], play: ['playing'], pause: ['playing'], ended: ['playing', 'time'], view: [],
+  load: ALL_KEYS, time: ['time'], play: ['playing'], pause: ['playing'], ended: ['playing', 'time'], view: [], select: ['selected'],
 }
 /** 'fit': around the focus players; 'map': the whole radar; 'free': zoomed or panned by the user. */
 export type Zoom = 'fit' | 'map' | 'free'
@@ -184,6 +194,29 @@ const WEAPON: Record<string, string> = {
   inferno: 'Molotov', sg556: 'SG 553', aug: 'AUG', ump45: 'UMP-45', p90: 'P90', mp7: 'MP7', mp5sd: 'MP5-SD',
   bizon: 'PP-Bizon', nova: 'Nova', xm1014: 'XM1014', mag7: 'MAG-7', sawedoff: 'Sawed-Off', negev: 'Negev',
   m249: 'M249', scar20: 'SCAR-20', g3sg1: 'G3SG1', revolver: 'R8', taser: 'Zeus',
+}
+/**
+ * The game's icon name for an item as the clip and the match detail name it ("USP-S", "Smoke
+ * Grenade"); knives of every kind share one. Unknown items have none and show as text.
+ */
+const ITEM_ICON: Record<string, string> = {
+  'AK-47': 'ak47', 'M4A1-S': 'm4a1_silencer', 'M4A4': 'm4a1', 'AWP': 'awp', 'SSG 08': 'ssg08', 'Galil AR': 'galilar',
+  'FAMAS': 'famas', 'SG 553': 'sg556', 'AUG': 'aug', 'SCAR-20': 'scar20', 'G3SG1': 'g3sg1', 'MAC-10': 'mac10',
+  'MP9': 'mp9', 'MP7': 'mp7', 'MP5-SD': 'mp5sd', 'UMP-45': 'ump45', 'P90': 'p90', 'PP-Bizon': 'bizon', 'Nova': 'nova',
+  'XM1014': 'xm1014', 'MAG-7': 'mag7', 'Sawed-Off': 'sawedoff', 'Negev': 'negev', 'M249': 'm249',
+  'USP-S': 'usp_silencer', 'P2000': 'hkp2000', 'Glock-18': 'glock', 'Desert Eagle': 'deagle', 'P250': 'p250',
+  'Tec-9': 'tec9', 'Five-SeveN': 'fiveseven', 'CZ75-Auto': 'cz75a', 'Dual Berettas': 'elite', 'R8 Revolver': 'revolver',
+  'Zeus x27': 'taser', 'C4 Explosive': 'c4', 'Smoke Grenade': 'smokegrenade', 'Flashbang': 'flashbang',
+  'High Explosive Grenade': 'hegrenade', 'Molotov': 'molotov', 'Incendiary Grenade': 'incgrenade', 'Decoy Grenade': 'decoy',
+}
+const itemIcon = (item: string) => ITEM_ICON[item] ?? (/knife|bayonet|karambit|daggers/i.test(item) ? 'knife' : undefined)
+/** Grenades in the selected player's HUD, one icon each, always in this order. */
+const NADE_ORDER = ['Smoke Grenade', 'Flashbang', 'High Explosive Grenade', 'Molotov', 'Incendiary Grenade', 'Decoy Grenade']
+/** The value of a detail change list (`[frame, value, …]`) at a frame. */
+const detailAt = (list: number[] | undefined, frame: number) => {
+  let v: number | undefined
+  for (let i = 0; list && i < list.length && list[i] <= frame; i += 2) v = list[i + 1]
+  return v
 }
 /** Names on the map stay short; the full name shows on hover. */
 const short = (name: string) => ([...name].length > 10 ? [...name].slice(0, 9).join('') + '…' : name)
@@ -329,6 +362,19 @@ export class RadarclipPlayer {
   /** Players drawn in the last frame (radar px), for hover. */
   private drawn: { index: number; x: number; y: number; r: number }[] = []
   private hovered: number | null = null
+  private _selectable: boolean
+  private _selected: number | null = null
+  /** The match's detail for this round (loadouts, kit, helmet), when `load` got it. */
+  private detail: Detail | undefined
+  /**
+   * Players stacked under the pointer, listed to pick from: where (radar px), who, and whether a
+   * click or tap opened it (it then stays until a pick or a click elsewhere).
+   */
+  private stack: { x: number; y: number; players: number[]; pinned: boolean } | null = null
+  /** The list's rows and the HUD's ✕ as drawn in the last frame (CSS px), for clicks. */
+  private targets: { box: [number, number, number, number]; index: number | null }[] = []
+  private stackBox: [number, number, number, number] | null = null
+  private stackRow: number | null = null
   /** Label fades across frames (real time, so they finish while paused), by label key. */
   private labelFade = new Map<string, { on: boolean; a: number; freeSince: number | null; at: number }>()
   private fadeRaf = 0
@@ -343,6 +389,7 @@ export class RadarclipPlayer {
     this.ctx = canvas.getContext('2d')!
     this.opts = opts
     this.theme = { ...DEFAULT_THEME, ...opts.theme }
+    this._selectable = opts.select === true
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(() => this.replay && this.render())
       this.resizeObserver.observe(canvas)
@@ -359,9 +406,16 @@ export class RadarclipPlayer {
 
   // --- loading -------------------------------------------------------------------------------
 
-  async load(clip: Clip): Promise<void> {
+  /**
+   * Load a clip. `detail` is the match's detail for the same round (`MatchRound.detail`, on the
+   * round's frames): with it the selected player's HUD also shows grenades, kit and helmet.
+   */
+  async load(clip: Clip, detail?: Detail): Promise<void> {
     this.pause()
     const r = (this.replay = decode(clip))
+    this.detail = detail
+    this._selected = null
+    this.stack = null
     this.radar = (await this.resolveRadar(clip)) ?? this.syntheticRadar(r)
     this.images = {}
     const img = async (src?: string | null) => {
@@ -631,25 +685,94 @@ export class RadarclipPlayer {
     return [Math.min(Math.max(x, 0), 1024 - size), Math.min(Math.max(y, 0), 1024 - size), size]
   }
 
-  /** Highlight the player under the pointer (their name in full, on a pill), or none. */
+  /** Players under a point (CSS px), nearest first, and that point in radar px. */
+  private hitsAt(cssX: number, cssY: number): { players: number[]; x: number; y: number } {
+    const [x, y] = this.toRadar(cssX, cssY)
+    const slack = (8 * this.screen.dpr) / this.screen.s
+    const near = this.drawn
+      .map((d) => ({ index: d.index, dist: Math.hypot(d.x - x, d.y - y), r: d.r }))
+      .filter((d) => d.dist <= d.r + slack)
+      .sort((a, b) => a.dist - b.dist)
+    return { players: near.map((d) => d.index), x, y }
+  }
+
+  private target(cssX: number, cssY: number) {
+    return this.targets.find(({ box: [a, b, c, d] }) => cssX >= a && cssX <= c && cssY >= b && cssY <= d)
+  }
+
+  /**
+   * Highlight the player under the pointer (their name in full, on a pill), or none. With
+   * `select`, players stacked on one spot open a list instead; it keeps its rows while the
+   * pointer is in it.
+   */
   private hover(cssX: number | null, cssY = 0) {
     let hit: number | null = null
-    if (cssX != null && this.replay) {
-      const [x, y] = this.toRadar(cssX, cssY)
-      const slack = (8 * this.screen.dpr) / this.screen.s
-      let best = Infinity
-      for (const d of this.drawn) {
-        const dist = Math.hypot(d.x - x, d.y - y)
-        if (dist <= d.r + slack && dist < best) {
-          best = dist
-          hit = d.index
-        }
+    let stack = this.stack
+    let row: number | null = null
+    const inList = cssX != null && this.stackBox != null && cssX >= this.stackBox[0] && cssX <= this.stackBox[2] && cssY >= this.stackBox[1] && cssY <= this.stackBox[3]
+    if (inList) row = this.target(cssX!, cssY)?.index ?? null
+    else if (cssX != null && this.replay) {
+      const at = this.hitsAt(cssX, cssY)
+      if (this._selectable && at.players.length > 1) {
+        const same = stack != null && stack.players.length === at.players.length && at.players.every((p) => stack!.players.includes(p))
+        if (!same) stack = { x: at.x, y: at.y, players: [...at.players].sort((a, b) => a - b), pinned: false }
+      } else {
+        hit = at.players[0] ?? null
+        if (stack && !stack.pinned) stack = null
       }
-    }
-    if (hit === this.hovered) return
+    } else if (stack && !stack.pinned) stack = null
+    const target = cssX != null ? this.target(cssX, cssY) : undefined
+    this.canvas.style.cursor = hit != null || target || (stack && !inList) ? 'pointer' : 'grab'
+    if (hit === this.hovered && stack === this.stack && row === this.stackRow) return
     this.hovered = hit
-    this.canvas.style.cursor = hit != null ? 'pointer' : 'grab'
+    this.stack = stack
+    this.stackRow = row
     this.render()
+  }
+
+  /** A click or tap (no drag): pick from the list, select a player, open a stack, or clear. */
+  private tap(cssX: number, cssY: number) {
+    if (!this._selectable || !this.replay) return
+    const target = this.target(cssX, cssY)
+    if (target) return this.select(target.index)
+    const at = this.hitsAt(cssX, cssY)
+    if (at.players.length > 1) {
+      this.stack = { x: at.x, y: at.y, players: [...at.players].sort((a, b) => a - b), pinned: true }
+      this.hovered = null
+      this.render()
+      return
+    }
+    const hit = at.players[0] ?? null
+    this.select(hit != null && hit === this._selected ? null : hit)
+  }
+
+  /** The selected player, as an index into `clip.players`, or null. */
+  get selected(): number | null {
+    return this._selected
+  }
+
+  /** Select a player by their index in `clip.players`; null (or an unknown index) clears it. */
+  select(index: number | null) {
+    const ix = index != null && this.replay?.players[index] ? index : null
+    const hadStack = this.stack != null
+    this.stack = null
+    this.stackRow = null
+    if (ix === this._selected) {
+      if (hadStack) this.render()
+      return
+    }
+    this._selected = ix
+    if (this.replay) this.render()
+    this.emit('select')
+  }
+
+  /** Whether a click or tap selects players (the `select` option). Off clears the selection. */
+  get selectable() {
+    return this._selectable
+  }
+  set selectable(on: boolean) {
+    this._selectable = on
+    if (!on) this.select(null)
   }
 
   private toRadar(cssX: number, cssY: number): [number, number] {
@@ -662,6 +785,8 @@ export class RadarclipPlayer {
     c.style.touchAction = 'none'
     c.style.cursor = 'grab'
     const down = new Map<number, { x: number; y: number }>()
+    // Where a single pointer went down and how far it went, to tell a click or tap from a drag.
+    let press: { id: number; x: number; y: number; moved: number } | null = null
     const local = (x: number, y: number) => {
       const r = c.getBoundingClientRect()
       return [x - r.left, y - r.top] as const
@@ -681,6 +806,7 @@ export class RadarclipPlayer {
       if (!this.replay || (e.pointerType === 'mouse' && e.button !== 0)) return
       c.setPointerCapture(e.pointerId)
       down.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      press = down.size === 1 ? { id: e.pointerId, x: e.clientX, y: e.clientY, moved: 0 } : null
       c.style.cursor = 'grabbing'
     })
     c.addEventListener('pointermove', (e) => {
@@ -689,6 +815,7 @@ export class RadarclipPlayer {
         if (e.pointerType === 'mouse') this.hover(...local(e.clientX, e.clientY))
         return
       }
+      if (press?.id === e.pointerId) press.moved = Math.max(press.moved, Math.hypot(e.clientX - press.x, e.clientY - press.y))
       if (down.size === 1) {
         this.panBy(e.clientX - p.x, e.clientY - p.y)
         p.x = e.clientX
@@ -707,7 +834,12 @@ export class RadarclipPlayer {
       if (!down.size) c.style.cursor = 'grab'
     }
     c.addEventListener('pointerleave', () => this.hover(null))
-    c.addEventListener('pointerup', up)
+    c.addEventListener('pointerup', (e) => {
+      const click = press?.id === e.pointerId && press.moved < 5 && down.size === 1
+      press = null
+      up(e)
+      if (click) this.tap(...local(e.clientX, e.clientY))
+    })
     c.addEventListener('pointercancel', up)
     c.addEventListener('dblclick', () => {
       if (this.replay) this.zoom = 'fit'
@@ -753,6 +885,7 @@ export class RadarclipPlayer {
       zoom: this._zoom,
       floor: this._floor,
       floors: this.split != null,
+      selected: this._selected,
     }
   }
 
@@ -1399,14 +1532,26 @@ export class RadarclipPlayer {
         g.lineWidth = mine ? edge * 1.5 : edge
         g.strokeStyle = mine ? '#fff' : th.bg
         g.stroke()
+        // The selected player: a white ring on a dark edge, outside the HP and blind rings.
+        if (f.live && p.index === this._selected) {
+          circle(x, y, R + 7 * u)
+          g.lineWidth = 3.6 * u
+          g.strokeStyle = th.bg
+          g.stroke()
+          g.lineWidth = 1.8 * u
+          g.strokeStyle = '#fff'
+          g.stroke()
+        }
       })
       let dz = ''
       if (!mine && me && Math.abs(st.z - me.z) >= 100) dz = ` ${st.z > me.z ? '▲' : '▼'}${Math.abs(Math.round((st.z - me.z) * 0.0254))} m`
       const hovered = f.live && p.index === this.hovered
+      const picked = f.live && p.index === this._selected
       // Names only (HP is the ring), styled alike (the halo marks the focus player); theirs in full,
-      // and the hovered one's in full on a pill.
-      const str = `${mine || hovered ? p.name : short(p.name)}${dz}`
-      text(`p${p.index}`, x, y, R + (st.hp < 100 ? 3 * u : 0), str, th.fg, { bold: hovered, pill: hovered, alpha: hovered ? 1 : 0.92, prio: hovered ? 3 : mine ? 2 : focus.includes(p.index) ? 1 : fighting.has(p.index) ? 0.5 : 0 })
+      // the hovered one's in full on a pill, the selected one's in full and bold below its ring.
+      const str = `${mine || hovered || picked ? p.name : short(p.name)}${dz}`
+      const gap = picked ? R + 8 * u : R + (st.hp < 100 ? 3 * u : 0)
+      text(`p${p.index}`, x, y, gap, str, th.fg, { bold: hovered || picked, pill: hovered, alpha: hovered || picked ? 1 : 0.92, prio: hovered ? 3 : picked ? 2.5 : mine ? 2 : focus.includes(p.index) ? 1 : fighting.has(p.index) ? 0.5 : 0 })
       drawn.push({ index: p.index, x, y, r: R })
     }
     if (f.live) this.drawn = drawn
@@ -1706,6 +1851,9 @@ export class RadarclipPlayer {
       y += H_ROW + 4 * k
     }
 
+    const playerW = this.drawSelected(f, k, pad)
+    this.drawStack(f, k, pad)
+
     // Mark label: the latest labelled mark shows for a moment (3 s, longer for long notes so they
     // can be read), then fades out; the next mark replaces it. It fades in just before its mark,
     // so it is fully there when the knob reaches it. A dot (as on the timeline) leads it; long
@@ -1721,7 +1869,8 @@ export class RadarclipPlayer {
       g.globalAlpha = Math.max(0, Math.min(1, (shown + MARK_FADE_IN) / MARK_FADE_IN, (hold - shown) / 0.5))
       font(12, 500)
       const LINE = 16 * k
-      const lines = wrap(mark.label, W - 2 * pad - 30 * k, MARK_LINES, (s) => g.measureText(s).width)
+      // Next to the selected player's HUD the label keeps to the rest of the width.
+      const lines = wrap(mark.label, W - 2 * pad - 30 * k - (playerW ? playerW + 16 * k : 0), MARK_LINES, (s) => g.measureText(s).width)
       const w = Math.max(...lines.map((l) => g.measureText(l).width)) + 30 * k
       const h = 6 * k + lines.length * LINE
       const top = H - pad - h
@@ -1735,5 +1884,184 @@ export class RadarclipPlayer {
       g.globalAlpha = 1
     }
     g.textBaseline = 'alphabetic'
+  }
+
+  /**
+   * The selected player, small in the bottom-right corner like the game's own HUD: name and ✕,
+   * then HP, armor and the weapon in hand, then one icon per grenade and the kit. No box: a dark
+   * fade from the corner and the text's shadow carry it. Returns its width (0 when none).
+   */
+  private drawSelected(f: Frame, k: number, pad: number): number {
+    const r = this.replay
+    const { g, W, H } = f
+    const t = f.tick
+    if (f.live) this.targets = []
+    const sel = f.live && f.hud.player && this._selectable ? this._selected : null
+    const p = sel != null ? r.players[sel] : undefined
+    if (sel == null || !p) return 0
+    const st = stateAt(r, sel, t)
+    const frame = Math.max(0, Math.round((t - r.start) / r.step))
+    const d = this.detail?.players.length === r.players.length ? this.detail.players[sel] : undefined
+    const gearIx = detailAt(d?.gear, frame)
+    const gear = gearIx != null ? this.detail?.gear[gearIx] ?? [] : []
+    const nades = gear.filter((i) => NADE_ORDER.includes(i)).sort((a, b) => NADE_ORDER.indexOf(a) - NADE_ORDER.indexOf(b))
+    const kit = detailAt(d?.kit, frame) === 1
+    const helmet = detailAt(d?.helmet, frame) === 1
+
+    const fade = 280 * k
+    g.save()
+    g.translate(W, H)
+    g.scale(1, 0.42)
+    const grad = g.createRadialGradient(0, 0, 0, 0, 0, fade)
+    grad.addColorStop(0, 'rgba(6,8,10,.88)')
+    grad.addColorStop(0.45, 'rgba(6,8,10,.58)')
+    grad.addColorStop(1, 'rgba(6,8,10,0)')
+    g.fillStyle = grad
+    g.fillRect(-fade, -fade, fade, fade)
+    g.restore()
+
+    type Part = { w: number; draw: (x: number, cy: number) => void }
+    const disp = (size: number, weight: number) => (g.font = `${weight} ${size * k}px ${DISPLAY}`)
+    const word = (s: string, size: number, weight: number, color: string): Part => {
+      disp(size, weight)
+      return { w: g.measureText(s).width, draw: (x, cy) => { disp(size, weight); g.fillStyle = color; g.fillText(s, x, cy) } }
+    }
+    // A game icon at height h, else the item's name in small type.
+    const item = (icon: string | undefined, fallback: string, h: number, alpha = 1): Part => {
+      const img = icon ? this.icon(icon) : null
+      if (!img || !img.naturalWidth) return word(fallback, 11, 600, this.theme.muted)
+      const w = (img.naturalWidth / img.naturalHeight) * h
+      return { w, draw: (x, cy) => { g.globalAlpha = alpha; g.drawImage(img, x, cy - h / 2, w, h); g.globalAlpha = 1 } }
+    }
+    const cross = (color: string): Part => {
+      const s = 11 * k, b = s / 3
+      return { w: s, draw: (x, cy) => { g.fillStyle = color; g.fillRect(x + b, cy - s / 2, b, s); g.fillRect(x, cy - b / 2, s, b) } }
+    }
+    const right = W - pad - 2 * k
+    const ROW = 19 * k
+    let width = 0
+    let cy = H - pad - ROW / 2
+    // Right-aligned, from the bottom row up.
+    const row = (parts: Part[], gap: number) => {
+      const w = parts.reduce((a, p) => a + p.w, 0) + gap * (parts.length - 1)
+      let x = right - w
+      for (const part of parts) {
+        part.draw(x, cy)
+        x += part.w + gap
+      }
+      width = Math.max(width, w)
+      cy -= ROW
+      return right - w
+    }
+    g.save()
+    g.textBaseline = 'middle'
+    g.textAlign = 'left'
+    g.shadowColor = 'rgba(0,0,0,.7)'
+    g.shadowBlur = 2 * k
+    g.shadowOffsetY = 1 * k
+    if (st && (nades.length || kit)) {
+      const SHORT: Record<string, string> = { 'Smoke Grenade': 'Smoke', 'Flashbang': 'Flash', 'High Explosive Grenade': 'HE', 'Molotov': 'Molly', 'Incendiary Grenade': 'Inc', 'Decoy Grenade': 'Decoy' }
+      row([...nades.map((n) => item(itemIcon(n), SHORT[n] ?? n, 13 * k, 0.85)), ...(kit ? [item('defuser', 'Kit', 13 * k, 0.85)] : [])], 6 * k)
+    }
+    if (st) {
+      const hpColor = st.hp < 30 ? DANGER : this.theme.fg
+      // 4px inside a group (icon and number), 10px between HP, armor and weapon.
+      const space: Part = { w: 2 * k, draw: () => {} }
+      const parts = [cross(hpColor), word(String(st.hp), 15, 600, hpColor)]
+      if (st.armor > 0) parts.push(space, item(helmet ? 'armor_helmet' : 'kevlar', '', 11 * k, 0.8), word(String(st.armor), 15, 600, this.theme.muted))
+      if (st.weapon) parts.push(space, item(itemIcon(st.weapon), st.weapon, 14 * k))
+      row(parts, 4 * k)
+    }
+    // The name, in the side colour (muted once they are dead), and ✕ to clear.
+    const X = 10 * k
+    const close: Part = {
+      w: X,
+      draw: (x, y) => {
+        g.strokeStyle = this.theme.muted
+        g.lineWidth = 2 * k
+        g.lineCap = 'round'
+        g.beginPath()
+        g.moveTo(x + 2 * k, y - X / 2 + 2 * k)
+        g.lineTo(x + X - 2 * k, y + X / 2 - 2 * k)
+        g.moveTo(x + X - 2 * k, y - X / 2 + 2 * k)
+        g.lineTo(x + 2 * k, y + X / 2 - 2 * k)
+        g.stroke()
+      },
+    }
+    const nameY = cy
+    row([word(p.name, 15, 700, st ? this.sideColor(sel) : this.theme.muted), close], 8 * k)
+    g.restore()
+    // The ✕ takes clicks and taps over a 32px square.
+    const cx = (right - X / 2) / f.dpr, ccy = nameY / f.dpr
+    this.targets.push({ box: [cx - 16, ccy - 16, cx + 16, ccy + 16], index: null })
+    return width
+  }
+
+  /** Players stacked under the pointer, as a list to pick from (with `select`). */
+  private drawStack(f: Frame, k: number, pad: number) {
+    const r = this.replay
+    const { g, W, H } = f
+    if (f.live) this.stackBox = null
+    const stack = this.stack
+    if (!f.live || !stack || !this._selectable) return
+    // Once the players have split up (fewer than two still near the spot), a list nobody holds closes.
+    const reach = (14 * this.screen.dpr) / this.screen.s
+    const near = this.drawn.filter((d) => stack.players.includes(d.index) && Math.hypot(d.x - stack.x, d.y - stack.y) <= d.r + reach)
+    if (near.length < 2 && !stack.pinned && this.stackRow == null) {
+      this.stack = null
+      return
+    }
+    const { s, ox, oy } = this.screen
+    const ax = (stack.x - this.view[0]) * s + ox, ay = (stack.y - this.view[1]) * s + oy
+    const ROW = 24 * k, HEAD = 22 * k, w = 168 * k, P = 4 * k
+    const h = HEAD + ROW * stack.players.length + P
+    const x = Math.min(Math.max(pad, ax - w / 2), W - pad - w)
+    let y = ay + 16 * k
+    if (y + h > H - pad) y = Math.max(pad, ay - 16 * k - h)
+    g.save()
+    g.textBaseline = 'middle'
+    g.textAlign = 'left'
+    g.fillStyle = 'rgba(20,23,28,.97)'
+    g.beginPath()
+    g.roundRect(x, y, w, h, 8 * k)
+    g.fill()
+    g.lineWidth = 1 * k
+    g.strokeStyle = withAlpha(this.theme.muted, 0.3)
+    g.stroke()
+    g.font = `500 ${11 * k}px ${SANS}`
+    g.fillStyle = this.theme.muted
+    g.fillText(`${stack.players.length} players here`, x + 10 * k, y + HEAD / 2 + 1 * k)
+    const t = f.tick
+    stack.players.forEach((ix, i) => {
+      const ry = y + HEAD + i * ROW
+      const st = stateAt(r, ix, t)
+      if (this.stackRow === ix) {
+        g.fillStyle = withAlpha(this.theme.fg, 0.08)
+        g.beginPath()
+        g.roundRect(x + P, ry, w - 2 * P, ROW, 6 * k)
+        g.fill()
+      }
+      g.fillStyle = st ? this.sideColor(ix) : this.theme.muted
+      g.beginPath()
+      g.arc(x + 14 * k, ry + ROW / 2, 4 * k, 0, Math.PI * 2)
+      g.fill()
+      g.font = `${this.stackRow === ix ? 600 : 500} ${12 * k}px ${SANS}`
+      g.fillStyle = st ? this.theme.fg : this.theme.muted
+      const hp = st ? String(st.hp) : '✕'
+      g.font = `500 ${12 * k}px ${MONO}`
+      const hw = g.measureText(hp).width
+      g.font = `${this.stackRow === ix ? 600 : 500} ${12 * k}px ${SANS}`
+      let name = r.players[ix]?.name ?? ''
+      const room = w - 26 * k - hw - 18 * k
+      while (name.length > 1 && g.measureText(name).width > room) name = name.slice(0, -2) + '…'
+      g.fillText(name, x + 24 * k, ry + ROW / 2)
+      g.font = `500 ${12 * k}px ${MONO}`
+      g.fillStyle = st && st.hp < 30 ? DANGER : this.theme.muted
+      g.fillText(hp, x + w - 10 * k - hw, ry + ROW / 2)
+      const dpr = f.dpr
+      this.targets.push({ box: [(x + P) / dpr, ry / dpr, (x + w - P) / dpr, (ry + ROW) / dpr], index: ix })
+    })
+    g.restore()
+    this.stackBox = [x / f.dpr, y / f.dpr, (x + w) / f.dpr, (y + h) / f.dpr]
   }
 }
