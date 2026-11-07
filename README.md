@@ -68,7 +68,7 @@ parts. `await p.snapshot({ width: 1200, height: 630, time, hud: { marks: false }
 draws one frame off-screen at its own size, moment and framing (`zoom: 'fit'` by default), e.g.
 for a share image; the view on screen stays as it is. Colours via `--radarclip-ct`, `-t`, `-me`, `-bg`, `-fg`, `-muted`.
 
-With `select: true` (or `<radarclip-player select>`) a click or tap selects a player: a white border
+With `select: true` (or `<radarclip-player select>`) a click or tap selects a player: white corner brackets
 and their HP, armor and weapon small in the bottom-right corner; players stacked on one spot open
 a list to pick from, and Esc on the element clears it. `p.select(index | null)`, `p.selected` and
 `state.selected` (with a `'select'` event) drive it from outside. Pass the match's detail for the

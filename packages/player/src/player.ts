@@ -33,7 +33,7 @@ export interface PlayerOptions {
   /** Zoom with the mouse wheel (default true). Turn off on pages that scroll past many players. */
   wheelZoom?: boolean
   /**
-   * Click or tap a player to select them (default false): a white border around the dot and their
+   * Click or tap a player to select them (default false): white corner brackets around the dot and their
    * HP, armor and gear in the map's bottom-right corner. Players stacked on one spot open a list
    * to pick from. See `select` and `selected`; can be switched later with `selectable`.
    */
@@ -185,6 +185,10 @@ const LABEL_HOLD = 500 // ms a hidden label's spot must stay free before it come
 const MIN_VIEW_WORLD = 400 // closest zoom: ~10 m across
 const PLAYER_RADIUS = 16 // world units: the player hitbox is 32 units (~0.8 m) wide
 const MIN_DOT = 4.5 // CSS px radius, so players stay easy to see at overview zoom; real size wins when zoomed in
+/** Selection brackets: the corners' distance outside the dot, in CSS px at 1×. */
+const BRACKET = 7
+/** Player names: their distance below the dot, clear of the brackets. */
+const LABEL_GAP = 7.5
 const GRENADE_HITS = new Set(['hegrenade', 'inferno', 'molotov', 'world', 'incgrenade'])
 
 const WEAPON: Record<string, string> = {
@@ -1567,12 +1571,32 @@ export class RadarclipPlayer {
         circle(x, y, R)
         g.fillStyle = col
         g.fill()
-        // The selected player (the focus player too, when selected) gets a white edge; everyone
-        // else a dark one. The focus player is told apart by the halo alone.
-        const picked = f.live && p.index === this._selected
-        g.lineWidth = picked ? edge * 1.5 : edge
-        g.strokeStyle = picked ? '#fff' : th.bg
+        g.lineWidth = mine ? edge * 1.5 : edge
+        g.strokeStyle = mine ? '#fff' : th.bg
         g.stroke()
+        // The selected player: four white corner brackets, a shape of their own so they don't read
+        // as a second focus player. One fixed square for everyone: on the diagonal the corners
+        // clear the HP ring, the blind ring and the focus halo, so nothing moves with the state
+        // (only a carrier's plant ring, drawn later, runs over them for the plant's few seconds).
+        if (f.live && p.index === this._selected) {
+          const b = R + BRACKET * u, L = 4 * u
+          // Own line caps, restored after: later rings and lines keep whatever was set before.
+          g.save()
+          g.lineCap = 'round'
+          for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+            g.beginPath()
+            g.moveTo(x + sx * b, y + sy * (b - L))
+            g.lineTo(x + sx * b, y + sy * b)
+            g.lineTo(x + sx * (b - L), y + sy * b)
+            g.lineWidth = 3.6 * u
+            g.strokeStyle = th.bg
+            g.stroke()
+            g.lineWidth = 1.8 * u
+            g.strokeStyle = '#fff'
+            g.stroke()
+          }
+          g.restore()
+        }
       })
       let dz = ''
       if (!mine && me && Math.abs(st.z - me.z) >= 100) dz = ` ${st.z > me.z ? '▲' : '▼'}${Math.abs(Math.round((st.z - me.z) * 0.0254))} m`
@@ -1581,7 +1605,9 @@ export class RadarclipPlayer {
       // Names only (HP is the ring), styled alike (the halo marks the focus player); theirs in full,
       // the hovered one's in full on a pill, the selected one's in full and bold.
       const str = `${mine || hovered || picked ? p.name : short(p.name)}${dz}`
-      const gap = R + (st.hp < 100 ? 3 * u : 0)
+      // One fixed distance for every name, below the selection brackets, so a label never moves
+      // when its player is hurt or selected.
+      const gap = R + LABEL_GAP * u
       text(`p${p.index}`, x, y, gap, str, th.fg, { bold: hovered || picked, pill: hovered, alpha: hovered || picked ? 1 : 0.92, prio: hovered ? 3 : picked ? 2.5 : mine ? 2 : focus.includes(p.index) ? 1 : fighting.has(p.index) ? 0.5 : 0 })
       drawn.push({ index: p.index, x, y, r: R })
     }
