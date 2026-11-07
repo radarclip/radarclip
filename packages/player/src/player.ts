@@ -1,4 +1,4 @@
-import { decode, placeName, stateAt, type Clip, type Event, type Radar, type Replay } from '@radarclip/format'
+import { decode, stateAt, type Clip, type Event, type Radar, type Replay } from '@radarclip/format'
 
 export interface Theme {
   ct: string
@@ -631,7 +631,7 @@ export class RadarclipPlayer {
     return [Math.min(Math.max(x, 0), 1024 - size), Math.min(Math.max(y, 0), 1024 - size), size]
   }
 
-  /** Highlight the player under the pointer (full label), or none. */
+  /** Highlight the player under the pointer (their name in full, on a pill), or none. */
   private hover(cssX: number | null, cssY = 0) {
     let hit: number | null = null
     if (cssX != null && this.replay) {
@@ -1251,9 +1251,9 @@ export class RadarclipPlayer {
 
     // Labels are placed after everything else, highest priority first, always below their anchor.
     // A label whose spot is taken fades out instead of moving (see the placement below).
-    const labels: { key: string; x: number; y: number; gap: number; str: string; fill: string; bold: boolean; alpha: number; prio: number }[] = []
-    const text = (key: string, x: number, y: number, gap: number, str: string, fill: string, { bold = false, alpha = 1, prio = 0 } = {}) =>
-      labels.push({ key, x, y, gap, str, fill, bold, alpha, prio })
+    const labels: { key: string; x: number; y: number; gap: number; str: string; fill: string; bold: boolean; pill: boolean; alpha: number; prio: number }[] = []
+    const text = (key: string, x: number, y: number, gap: number, str: string, fill: string, { bold = false, pill = false, alpha = 1, prio = 0 } = {}) =>
+      labels.push({ key, x, y, gap, str, fill, bold, pill, alpha, prio })
 
     // Deaths so far, and attacker → victim lines right after a kill.
     // Drawn after the cones so a cone never hides a death.
@@ -1404,11 +1404,9 @@ export class RadarclipPlayer {
       if (!mine && me && Math.abs(st.z - me.z) >= 100) dz = ` ${st.z > me.z ? '▲' : '▼'}${Math.abs(Math.round((st.z - me.z) * 0.0254))} m`
       const hovered = f.live && p.index === this.hovered
       // Names only (HP is the ring), styled alike (the halo marks the focus player); theirs in full,
-      // hover shows everything.
-      let str: string
-      if (hovered) str = `${p.name} · ${st.hp} HP${st.armor > 0 ? ` · ${st.armor} armor` : ''}${st.weapon ? ` · ${st.weapon}` : ''}${st.place ? ` · ${placeName(st.place)}` : ''}${dz}`
-      else str = `${mine ? p.name : short(p.name)}${dz}`
-      text(`p${p.index}`, x, y, R + (st.hp < 100 ? 3 * u : 0), str, th.fg, { bold: hovered, alpha: hovered ? 1 : 0.92, prio: hovered ? 3 : mine ? 2 : focus.includes(p.index) ? 1 : fighting.has(p.index) ? 0.5 : 0 })
+      // and the hovered one's in full on a pill.
+      const str = `${mine || hovered ? p.name : short(p.name)}${dz}`
+      text(`p${p.index}`, x, y, R + (st.hp < 100 ? 3 * u : 0), str, th.fg, { bold: hovered, pill: hovered, alpha: hovered ? 1 : 0.92, prio: hovered ? 3 : mine ? 2 : focus.includes(p.index) ? 1 : fighting.has(p.index) ? 0.5 : 0 })
       drawn.push({ index: p.index, x, y, r: R })
     }
     if (f.live) this.drawn = drawn
@@ -1448,10 +1446,12 @@ export class RadarclipPlayer {
     labels.sort((a, b) => b.prio - a.prio || (fades.get(b.key)?.a ?? 0) - (fades.get(a.key)?.a ?? 0) || (a.key < b.key ? -1 : 1))
     for (const l of labels) {
       seen.add(l.key)
-      g.font = `${l.bold ? 600 : 500} ${9 * u}px ${SANS}`
+      g.font = `${l.bold ? 600 : 500} ${(l.pill ? 10 : 9) * u}px ${SANS}`
       const w = g.measureText(l.str).width
       const off = l.gap + 2.5 * u
-      const boxOf = (lx: number, ly: number): [number, number, number, number] => [lx, ly - lh * 0.8, lx + w, ly + lh * 0.2]
+      // A pill reaches a little past its text on every side.
+      const px = l.pill ? 4.5 * u : 0, py = l.pill ? 2 * u : 0
+      const boxOf = (lx: number, ly: number): [number, number, number, number] => [lx - px, ly - lh * 0.8 - py, lx + w + px, ly + lh * 0.2 + py]
       const visible = (b: [number, number, number, number]) => b[0] >= vx && b[1] >= vy && b[2] <= vx + vs && b[3] <= vy + vs
       let spot: [number, number] = [l.x - w / 2, l.y + off + lh * 0.75]
       // Only at the bottom edge of the view do the always-shown labels go above instead.
@@ -1473,10 +1473,21 @@ export class RadarclipPlayer {
       if (f.on) placed.push(box)
       if (f.a <= 0) continue
       g.globalAlpha = l.alpha * f.a
-      g.lineWidth = 2.4 * u
-      g.strokeStyle = this.theme.bg
-      g.lineJoin = 'round'
-      g.strokeText(l.str, spot[0], spot[1])
+      if (l.pill) {
+        // The hovered name: on a dark pill instead of the outline, so it reads over anything.
+        g.beginPath()
+        g.roundRect(box[0], box[1], box[2] - box[0], box[3] - box[1], 3.5 * u)
+        g.fillStyle = withAlpha(this.theme.bg, 0.92)
+        g.fill()
+        g.lineWidth = 1 * u
+        g.strokeStyle = withAlpha(this.theme.muted, 0.55)
+        g.stroke()
+      } else {
+        g.lineWidth = 2.4 * u
+        g.strokeStyle = this.theme.bg
+        g.lineJoin = 'round'
+        g.strokeText(l.str, spot[0], spot[1])
+      }
       g.fillStyle = l.fill
       g.fillText(l.str, spot[0], spot[1])
       g.globalAlpha = 1
