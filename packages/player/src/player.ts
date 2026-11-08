@@ -1603,12 +1603,13 @@ export class RadarclipPlayer {
       const hovered = f.live && p.index === this.hovered
       const picked = f.live && p.index === this._selected
       // Names only (HP is the ring), styled alike (the halo marks the focus player); theirs in full,
-      // the hovered one's in full on a pill, the selected one's in full and bold.
+      // the hovered one's in full on a pill, the selected one's in full and bold. Hover never
+      // changes the weight, so the name does not widen under the pointer.
       const str = `${mine || hovered || picked ? p.name : short(p.name)}${dz}`
       // One fixed distance for every name, below the selection brackets, so a label never moves
       // when its player is hurt or selected.
       const gap = R + LABEL_GAP * u
-      text(`p${p.index}`, x, y, gap, str, th.fg, { bold: hovered || picked, pill: hovered, alpha: hovered || picked ? 1 : 0.92, prio: hovered ? 3 : picked ? 2.5 : mine ? 2 : focus.includes(p.index) ? 1 : fighting.has(p.index) ? 0.5 : 0 })
+      text(`p${p.index}`, x, y, gap, str, th.fg, { bold: picked, pill: hovered, alpha: hovered || picked ? 1 : 0.92, prio: hovered ? 3 : picked ? 2.5 : mine ? 2 : focus.includes(p.index) ? 1 : fighting.has(p.index) ? 0.5 : 0 })
       drawn.push({ index: p.index, x, y, r: R })
     }
     if (f.live) this.drawn = drawn
@@ -2107,12 +2108,12 @@ export class RadarclipPlayer {
       g.beginPath()
       g.arc(x + 14 * k, ry + ROW / 2, 4 * k, 0, Math.PI * 2)
       g.fill()
-      g.font = `${this.stackRow === ix ? 600 : 500} ${12 * k}px ${SANS}`
+      g.font = `500 ${12 * k}px ${SANS}`
       g.fillStyle = st ? this.theme.fg : this.theme.muted
       const hp = st ? String(st.hp) : '✕'
       g.font = `500 ${12 * k}px ${MONO}`
       const hw = g.measureText(hp).width
-      g.font = `${this.stackRow === ix ? 600 : 500} ${12 * k}px ${SANS}`
+      g.font = `500 ${12 * k}px ${SANS}`
       let name = r.players[ix]?.name ?? ''
       const room = w - 26 * k - hw - 18 * k
       while (name.length > 1 && g.measureText(name).width > room) name = name.slice(0, -2) + '…'
