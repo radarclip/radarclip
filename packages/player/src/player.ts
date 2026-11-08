@@ -156,6 +156,9 @@ export type Zoom = 'fit' | 'map' | 'free'
 export type Floor = 'upper' | 'lower'
 
 const ROUND_TIME = 115
+/** Game units past the floor split before the floor follows the focus player across it, so a
+ * player on the stairs doesn't make it flicker. */
+const FLOOR_SLACK = 48
 const BOMB_TIME = 40
 const DEFUSE = 10 // seconds to defuse without a kit
 const DEFUSE_KIT = 5
@@ -381,6 +384,8 @@ export class RadarclipPlayer {
   private lastMap = ''
   private _zoom: Zoom = 'fit'
   private _floor: Floor = 'upper'
+  /** The viewer picked the floor by hand: it stays until the next clip instead of following. */
+  private floorPicked = false
   private _playing = false
   private _speed = 1
 
@@ -464,6 +469,7 @@ export class RadarclipPlayer {
     this.tick = first ? first.t : r.start
     const me = clip.focus.length ? stateAt(r, clip.focus[0], this.tick) : null
     this._floor = this.split != null && me && me.z < this.split ? 'lower' : 'upper'
+    this.floorPicked = false
     this.render()
     this.emit('load')
   }
@@ -854,6 +860,7 @@ export class RadarclipPlayer {
   }
   set floor(f: Floor) {
     this._floor = f
+    if (this.replay) this.floorPicked = true
     this.render()
     this.emit('view', ['floor'])
   }
@@ -984,6 +991,7 @@ export class RadarclipPlayer {
 
   render() {
     if (!this.replay) return
+    this.followFloor()
     const cv = this.canvas
     const dpr = typeof devicePixelRatio === 'number' ? devicePixelRatio : 1
     const cssW = cv.clientWidth || cv.width
@@ -994,6 +1002,19 @@ export class RadarclipPlayer {
       cv.height = H
     }
     this.draw({ g: this.ctx, W, H, cssW, dpr, view: this.view, tick: this.tick, hud: hudParts(this.opts.hud), hudScale: 1, live: true })
+  }
+
+  /** On a map with two floors, show the one the focus player is on as they move between them, unless
+   * the viewer picked one by hand. */
+  private followFloor() {
+    const r = this.replay, split = this.split
+    if (!r || split == null || this.floorPicked || !r.clip.focus.length) return
+    const me = stateAt(r, r.clip.focus[0], this.tick)
+    if (!me) return
+    const floor: Floor = this._floor === 'upper' ? (me.z < split - FLOOR_SLACK ? 'lower' : 'upper') : (me.z >= split + FLOOR_SLACK ? 'upper' : 'lower')
+    if (floor === this._floor) return
+    this._floor = floor
+    this.emit('view', ['floor'])
   }
 
   /**
