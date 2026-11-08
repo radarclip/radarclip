@@ -1634,8 +1634,8 @@ export class RadarclipPlayer {
       g.strokeRect(bx - 2.5 * u, by - 2.5 * u, 5 * u, 5 * u)
     }
 
-    // Labels sit below the dot (the space above belongs to damage numbers) and never move, so
-    // they don't jump around in close fights. One whose spot is covered by a player or a
+    // Labels sit below the dot (the space above belongs to damage numbers; at the bottom edge of
+    // the view they go above) and never move, so they don't jump around in close fights. One whose spot is covered by a player or a
     // higher-priority label fades out, and comes back once the spot has stayed free for
     // LABEL_HOLD, so it doesn't blink. The focus player's, the selected and the hovered label
     // show over players, but give way to a higher-priority label (the hovered pill wins).
@@ -1658,9 +1658,13 @@ export class RadarclipPlayer {
       const px = l.pill ? 4.5 * u : 0, py = l.pill ? 2 * u : 0
       const boxOf = (lx: number, ly: number): [number, number, number, number] => [lx - px, ly - lh * 0.8 - py, lx + w + px, ly + lh * 0.2 + py]
       const visible = (b: [number, number, number, number]) => b[0] >= vx && b[1] >= vy && b[2] <= vx + vs && b[3] <= vy + vs
-      let spot: [number, number] = [l.x - w / 2, l.y + off + lh * 0.75]
-      // Only at the bottom edge of the view do the always-shown labels go above instead.
-      if (l.prio >= 2 && !visible(boxOf(...spot))) spot = [l.x - w / 2, l.y - off - lh * 0.25]
+      // At the side edges a label slides inward; at the bottom edge it goes above the dot. Which
+      // side depends only on where the dot is (room for the larger hover pill), so a label never
+      // swaps sides when its player is hovered.
+      const inside = l.x >= vx && l.x <= vx + vs
+      const lx = inside ? Math.min(Math.max(l.x - w / 2, vx + px), vx + vs - w - px) : l.x - w / 2
+      const below = l.y + off + lh * 0.95 + 2 * u <= vy + vs
+      const spot: [number, number] = below ? [lx, l.y + off + lh * 0.75] : [lx, l.y - off - lh * 0.25]
       const box = boxOf(...spot)
       const clear = ([a, c, e, f]: [number, number, number, number]) => box[2] <= a || box[0] >= e || box[3] <= c || box[1] >= f
       const free = visible(box) && placed.every(clear)
