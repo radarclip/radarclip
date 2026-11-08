@@ -189,6 +189,10 @@ const MIN_DOT = 4.5 // CSS px radius, so players stay easy to see at overview zo
 const BRACKET = 7
 /** Player names: their distance below the dot, clear of the brackets. */
 const LABEL_GAP = 7.5
+/** A height shows next to a name only within this map distance of the reference player (~15 m)… */
+const HEIGHT_NEAR = 600
+/** …and from about one floor apart (~3 m), in game units. */
+const HEIGHT_STEP = 120
 const GRENADE_HITS = new Set(['hegrenade', 'inferno', 'molotov', 'world', 'incgrenade'])
 
 const WEAPON: Record<string, string> = {
@@ -1473,6 +1477,11 @@ export class RadarclipPlayer {
     const edge = Math.min(1.2 * u, R * 0.3)
     const focus = r.clip.focus
     const me = focus.length ? stateAt(r, focus[0], t) : null
+    // Heights are counted from the selected player, else from the focus player, and shown only
+    // for players close by on the map but a floor apart (Heaven over a site): elsewhere the
+    // radar already says where someone is.
+    const pickedSt = f.live && this._selectable && this._selected != null ? stateAt(r, this._selected, t) : null
+    const ref = pickedSt && pickedSt.hp > 0 ? { ix: this._selected, st: pickedSt } : me ? { ix: focus[0], st: me } : null
     const bodies: (() => void)[] = []
     const cones: (() => void)[] = []
     const drawn: typeof this.drawn = []
@@ -1599,7 +1608,8 @@ export class RadarclipPlayer {
         }
       })
       let dz = ''
-      if (!mine && me && Math.abs(st.z - me.z) >= 100) dz = ` ${st.z > me.z ? '▲' : '▼'}${Math.abs(Math.round((st.z - me.z) * 0.0254))} m`
+      if (ref && p.index !== ref.ix && Math.hypot(st.x - ref.st.x, st.y - ref.st.y) < HEIGHT_NEAR && Math.abs(st.z - ref.st.z) >= HEIGHT_STEP)
+        dz = ` ${st.z > ref.st.z ? '▲' : '▼'}${Math.abs(Math.round((st.z - ref.st.z) * 0.0254))} m`
       const hovered = f.live && p.index === this.hovered
       const picked = f.live && p.index === this._selected
       // Names only (HP is the ring), styled alike (the halo marks the focus player); theirs in full,

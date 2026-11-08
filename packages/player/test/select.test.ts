@@ -109,3 +109,35 @@ it('clears the selection on a new clip', async () => {
   await p.load(clip)
   expect(p.selected).toBeNull()
 })
+
+it('shows heights only for players near the reference player, the selected one if any', async () => {
+  const match = await readMatch(fixture('nuke-r1-2.radarclip-match.json'))
+  const heightsAt = (texts: string[]) => texts.filter((s) => /[▲▼]\d+ m$/.test(s)).map((s) => s.replace(/ [▲▼]\d+ m$/, ''))
+  let checked = 0
+  for (const round of match.rounds) {
+    const rep = decode(round.clip)
+    const { p, texts } = await player(round.clip)
+    for (let tick = rep.start; tick <= rep.end; tick += 64 * 2) {
+      p.select(null)
+      for (const ref of [null, ...rep.players.map((q) => q.index)]) {
+        if (ref != null && !(stateAt(rep, ref, tick)?.hp ?? 0)) continue
+        p.select(ref)
+        texts.length = 0
+        p.seek(tick / rep.tickrate)
+        const from = ref ?? round.clip.focus?.[0]
+        const at = from != null ? stateAt(rep, from, tick) : null
+        for (const label of heightsAt(texts)) {
+          const exact = rep.players.findIndex((q) => q.name === label)
+          const ix = exact >= 0 ? exact : rep.players.findIndex((q) => q.name.startsWith(label.replace(/…$/, '')))
+          const st = stateAt(rep, ix, tick)!
+          expect(ix).not.toBe(from)
+          expect(Math.hypot(st.x - at!.x, st.y - at!.y)).toBeLessThan(600)
+          expect(Math.abs(st.z - at!.z)).toBeGreaterThanOrEqual(120)
+          checked++
+        }
+      }
+    }
+  }
+  // Nuke stacks floors, so some heights must show.
+  expect(checked).toBeGreaterThan(0)
+})
