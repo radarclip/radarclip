@@ -418,8 +418,9 @@ fn flights<'a>(rows: impl Iterator<Item = &'a GrenadeRow>) -> Vec<Vec<&'a Grenad
 /// and `bomb_abortdefuse`. Where a demo has none of a kind, rebuild them from the player samples:
 /// a blind where a player's flash duration changes right after a flash pops (on the pop's tick,
 /// like the real event), a plant start where the C4 starts arming, a defuse start and stop where
-/// the player starts and stops defusing. Times are up to one sample (GRID ticks) late.
-fn derive_missing(events: &mut Vec<GameEvent>, players: &[PlayerInfo], samples: &[Vec<Option<Raw>>]) {
+/// the player starts and stops defusing. Times are up to one sample (GRID ticks) late. Missing
+/// bomb pickups are rebuilt from the loadouts in any demo (see `missing_pickups`).
+fn derive_missing(events: &mut Vec<GameEvent>, players: &[PlayerInfo], samples: &[Vec<Option<Raw>>], gear: &[Vec<String>], rounds: &[Round]) {
     let has = |name: &str| events.iter().any(|e| e.name == name);
     let (blinds, plants, defuses) = (!has("player_blind"), !has("bomb_beginplant"), !has("bomb_begindefuse"));
     let text = |name: &str, v: &str| EventField { name: name.into(), data: Some(Variant::String(v.into())) };
@@ -474,10 +475,60 @@ fn derive_missing(events: &mut Vec<GameEvent>, players: &[PlayerInfo], samples: 
             }
         }
     }
+    add.extend(missing_pickups(events, players, samples, gear, rounds));
     if !add.is_empty() {
         events.extend(add);
         events.sort_by_key(|e| e.tick);
     }
+}
+
+/// The C4 as the loadout names it.
+const C4: &str = "C4 Explosive";
+
+/// CS2 demos sometimes leave out `bomb_pickup`, for the C4 handed out at the round start as well
+/// as for one picked up off the ground, so the bomb would be drawn lying where it was last
+/// dropped. Where a living player's loadout holds the C4 while the round's real pickups and drops
+/// (as `Match::carry_events` reads them, from the previous round's end) say nobody or a dropper
+/// has it, add a pickup by that player on that sample, at their position.
+fn missing_pickups(events: &[GameEvent], players: &[PlayerInfo], samples: &[Vec<Option<Raw>>], gear: &[Vec<String>], rounds: &[Round]) -> Vec<GameEvent> {
+    // A real pickup may reach the demo a little after the loadout shows the C4.
+    const AHEAD: i32 = 2 * GRID;
+    // The dropper's loadout may still show the C4 a little after the drop.
+    const LAG: i32 = 4 * GRID;
+    let mut carry: Vec<&GameEvent> = events.iter().filter(|e| e.name == "bomb_pickup" || e.name == "bomb_dropped").collect();
+    carry.sort_by_key(|e| e.tick);
+    let starts: Vec<i32> = std::iter::once(0).chain(rounds.iter().map(|r| r.end)).collect();
+    let mut add = vec![];
+    for (p, s) in samples.iter().enumerate() {
+        let info = &players[p];
+        let steamid = if info.key.starts_with("bot:") { "0" } else { info.key.as_str() };
+        let mine = |e: &GameEvent| fstr(e, "user_steamid") == Some(steamid) && (steamid != "0" || fstr(e, "user_name") == Some(info.name.as_str()));
+        // The last pickup added for this player.
+        let mut added: Option<i32> = None;
+        for (slot, r) in s.iter().enumerate() {
+            let Some(r) = *r else { continue };
+            let tick = slot as i32 * GRID;
+            if !r.alive || !gear.get(r.gear as usize).is_some_and(|g| g.iter().any(|i| i == C4)) {
+                continue;
+            }
+            let from = starts[starts.partition_point(|&s| s < tick).saturating_sub(1)];
+            let last = carry[..carry.partition_point(|e| e.tick <= tick + AHEAD)].last().filter(|e| e.tick > from);
+            let known = match last {
+                Some(e) if e.name == "bomb_pickup" => true,
+                Some(e) if mine(e) && tick - e.tick <= LAG => true,
+                _ => added.is_some_and(|a| a > from && last.is_none_or(|e| a > e.tick)),
+            };
+            if known {
+                continue;
+            }
+            let text = |name: &str, v: &str| EventField { name: name.into(), data: Some(Variant::String(v.into())) };
+            let num = |name: &str, v: f32| EventField { name: name.into(), data: Some(Variant::F32(v)) };
+            let fields = vec![text("user_steamid", steamid), text("user_name", &info.name), num("user_X", r.x), num("user_Y", r.y), num("user_Z", r.z)];
+            add.push(GameEvent { name: "bomb_pickup".into(), fields, tick });
+            added = Some(tick);
+        }
+    }
+    add
 }
 
 fn intern(table: &mut Vec<String>, index: &mut AHashMap<String, u32>, s: &str) -> u32 {
@@ -628,7 +679,7 @@ impl Match {
         }
 
         meter.report(Stage::Players, 1.0);
-        derive_missing(&mut events, &players, &samples);
+        derive_missing(&mut events, &players, &samples, &gear, &rounds);
 
         // Pass 3: grenade projectiles, one row per tick of flight.
         let gr = meter.pass(Stage::Grenades, 1.0, || pass(bytes, &[], &[], &[], vec![], true))?;
@@ -1118,7 +1169,7 @@ mod derive_tests {
             raw(2.5, true, false), raw(2.5, true, false), raw(2.5, true, false), raw(1.8, true, false), raw(1.8, false, false)];
         let b: Vec<Option<Raw>> = (0..20).map(|s| raw(0.0, false, (15..18).contains(&s))).collect();
         let mut events = vec![event("flashbang_detonate", 10, "2"), event("flashbang_detonate", 50, "2")];
-        derive_missing(&mut events, &players, &[a, b]);
+        derive_missing(&mut events, &players, &[a, b], &[vec![]], &[]);
         let blinds: Vec<(i32, f64, Option<&str>)> = events.iter().filter(|e| e.name == "player_blind")
             .map(|e| (e.tick, (fnum(e, "blind_duration").unwrap() * 10.0).round() / 10.0, fstr(e, "attacker_steamid"))).collect();
         assert_eq!(blinds, vec![(10, 2.5, Some("2")), (50, 1.8, Some("2"))]);
@@ -1130,13 +1181,38 @@ mod derive_tests {
         ]);
     }
 
+    /// A loadout that gains the C4 without a real pickup gets one, at the player's position: the
+    /// carrier whose only event is a drop at the round start, and the C4 handed out with no event.
+    /// Real pickups, a dropper's lagging loadout and the previous round's events are left alone.
+    #[test]
+    fn rebuilds_missing_bomb_pickups_from_loadouts() {
+        let players: Vec<PlayerInfo> = (1..=3).map(|i| PlayerInfo { key: i.to_string(), name: format!("p{i}") }).collect();
+        let gear = vec![vec![], vec!["Glock-18".to_string(), C4.to_string()]];
+        let rounds = vec![
+            Round { number: 1, freeze_end: 40, end: 100, winner: None },
+            Round { number: 2, freeze_end: 140, end: 200, winner: None },
+        ];
+        let with = |c4: bool, x: f32| raw(0.0, false, false).map(|r| Raw { gear: c4 as u32, x, ..r });
+        // 1 holds the C4 all of round 1 and "drops" it at tick 4; 2 gets it at 104 in round 2 and
+        // drops it at 140 (loadout clear from 144); 3 picks it up at 160, its loadout a sample early.
+        let a: Vec<Option<Raw>> = (0..50).map(|s| with(s <= 24, s as f32)).collect();
+        let b: Vec<Option<Raw>> = (0..50).map(|s| with((26..=35).contains(&s), 100.0 + s as f32)).collect();
+        let c: Vec<Option<Raw>> = (0..50).map(|s| with((39..=45).contains(&s), 0.0)).collect();
+        let mut events = vec![event("bomb_dropped", 4, "1"), event("bomb_dropped", 140, "2"), event("bomb_pickup", 160, "3")];
+        derive_missing(&mut events, &players, &[a, b, c], &gear, &rounds);
+        let added: Vec<_> = events.iter().filter(|e| fnum(e, "user_X").is_some())
+            .map(|e| (e.name.as_str(), e.tick, fstr(e, "user_steamid"), fnum(e, "user_X"))).collect();
+        assert_eq!(added, vec![("bomb_pickup", 24, Some("1"), Some(6.0)), ("bomb_pickup", 104, Some("2"), Some(126.0))]);
+        assert_eq!(events.len(), 5);
+    }
+
     /// A demo that has the events keeps them as they are.
     #[test]
     fn keeps_real_events() {
         let players = vec![PlayerInfo { key: "1".into(), name: "a".into() }];
         let samples = vec![(0..10).map(|s| raw(if s > 3 { 2.0 } else { 0.0 }, s > 5, false)).collect()];
         let mut events = vec![event("flashbang_detonate", 10, "1"), event("player_blind", 10, "1"), event("bomb_beginplant", 22, "1")];
-        derive_missing(&mut events, &players, &samples);
+        derive_missing(&mut events, &players, &samples, &[vec![]], &[]);
         assert_eq!(events.len(), 3);
     }
 }
