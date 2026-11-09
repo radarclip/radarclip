@@ -415,14 +415,16 @@ fn flights<'a>(rows: impl Iterator<Item = &'a GrenadeRow>) -> Vec<Vec<&'a Grenad
 }
 
 /// Tournament (GOTV) demos often leave out `player_blind`, `bomb_beginplant`, `bomb_begindefuse`
-/// and `bomb_abortdefuse`. Where a demo has none of a kind, rebuild them from the player samples:
+/// and `bomb_abortdefuse`; matchmaking demos have defuse starts but no stops. Where a demo has
+/// none of a kind, rebuild them from the player samples:
 /// a blind where a player's flash duration changes right after a flash pops (on the pop's tick,
 /// like the real event), a plant start where the C4 starts arming, a defuse start and stop where
 /// the player starts and stops defusing. Times are up to one sample (GRID ticks) late. Missing
 /// bomb pickups are rebuilt from the loadouts in any demo (see `missing_pickups`).
 fn derive_missing(events: &mut Vec<GameEvent>, players: &[PlayerInfo], samples: &[Vec<Option<Raw>>], gear: &[Vec<String>], rounds: &[Round]) {
     let has = |name: &str| events.iter().any(|e| e.name == name);
-    let (blinds, plants, defuses) = (!has("player_blind"), !has("bomb_beginplant"), !has("bomb_begindefuse"));
+    let (blinds, plants) = (!has("player_blind"), !has("bomb_beginplant"));
+    let (begins, aborts) = (!has("bomb_begindefuse"), !has("bomb_abortdefuse"));
     let text = |name: &str, v: &str| EventField { name: name.into(), data: Some(Variant::String(v.into())) };
     let person = |prefix: &str, p: &PlayerInfo| {
         let steamid = if p.key.starts_with("bot:") { "0" } else { p.key.as_str() };
@@ -449,7 +451,7 @@ fn derive_missing(events: &mut Vec<GameEvent>, players: &[PlayerInfo], samples: 
             }
         }
     }
-    if plants || defuses {
+    if plants || begins || aborts {
         let defused: Vec<i32> = events.iter().filter(|e| e.name == "bomb_defused").map(|e| e.tick).collect();
         for (p, s) in samples.iter().enumerate() {
             let mut prev: Option<Raw> = None;
@@ -464,11 +466,11 @@ fn derive_missing(events: &mut Vec<GameEvent>, players: &[PlayerInfo], samples: 
                 if plants && r.alive && r.arming && !(prev.is_some() && was.arming) {
                     push("bomb_beginplant", None);
                 }
-                if defuses && r.alive && r.defusing && !(prev.is_some() && was.defusing) {
+                if begins && r.alive && r.defusing && !(prev.is_some() && was.defusing) {
                     push("bomb_begindefuse", Some(EventField { name: "haskit".into(), data: Some(Variant::Bool(r.kit)) }));
                 }
                 // A finished defuse ends with bomb_defused, which the attempt already looks for.
-                if defuses && prev.is_some() && was.defusing && !r.defusing && !defused.iter().any(|&d| d > tick - GRID && d <= tick) {
+                if aborts && prev.is_some() && was.defusing && !r.defusing && !defused.iter().any(|&d| d > tick - GRID && d <= tick) {
                     push("bomb_abortdefuse", None);
                 }
                 prev = Some(r);
@@ -728,8 +730,8 @@ impl Match {
         })
     }
 
-    /// Defuse attempts of a round: a start, then whatever ends it first (the defuser letting go or
-    /// dying, the defuse, the explosion, or the round end).
+    /// Defuse attempts of a round: a start, then whatever ends it first (the defuser letting go,
+    /// starting again or dying, the defuse, the explosion, or the round end).
     fn defuse_attempts(&self, round: &Round) -> Vec<Attempt<'_>> {
         let in_round = |e: &&GameEvent| e.tick >= round.freeze_end && e.tick <= round.end;
         let user = |e: &GameEvent| player_key(fstr(e, "user_steamid"), fstr(e, "user_name"));
@@ -740,7 +742,7 @@ impl Match {
             .map(|e| {
                 let by = user(e);
                 let stop = self.events.iter().filter(in_round).filter(|x| x.tick >= e.tick).find(|x| match x.name.as_str() {
-                    "bomb_abortdefuse" | "player_death" => user(x) == by && x.tick > e.tick,
+                    "bomb_abortdefuse" | "bomb_begindefuse" | "player_death" => user(x) == by && x.tick > e.tick,
                     "bomb_defused" | "bomb_exploded" => true,
                     _ => false,
                 });
@@ -1204,6 +1206,23 @@ mod derive_tests {
             .map(|e| (e.name.as_str(), e.tick, fstr(e, "user_steamid"), fnum(e, "user_X"))).collect();
         assert_eq!(added, vec![("bomb_pickup", 24, Some("1"), Some(6.0)), ("bomb_pickup", 104, Some("2"), Some(126.0))]);
         assert_eq!(events.len(), 5);
+    }
+
+    /// Matchmaking demos have defuse starts but no stops: the stops come from the defusing flag,
+    /// the real starts stay, and a stop at the defuse is left to `bomb_defused`.
+    #[test]
+    fn rebuilds_defuse_stops_next_to_real_starts() {
+        let players = vec![PlayerInfo { key: "1".into(), name: "a".into() }];
+        // Taps at 40 (lets go at 48), defuses from 60 until bomb_defused at 100.
+        let samples = vec![(0..30).map(|s| raw(0.0, false, (10..12).contains(&s) || (15..25).contains(&s))).collect()];
+        let mut events = vec![event("bomb_begindefuse", 39, "1"), event("bomb_begindefuse", 58, "1"), event("bomb_defused", 99, "1")];
+        derive_missing(&mut events, &players, &samples, &[vec![]], &[]);
+        assert_eq!(names(&events), vec![
+            ("bomb_begindefuse".into(), 39, Some("1".into())),
+            ("bomb_abortdefuse".into(), 48, Some("1".into())),
+            ("bomb_begindefuse".into(), 58, Some("1".into())),
+            ("bomb_defused".into(), 99, Some("1".into())),
+        ]);
     }
 
     /// A demo that has the events keeps them as they are.
